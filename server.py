@@ -6,12 +6,12 @@ from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 
+# הורדתי את StockTitan - נשארו רק 5 מקורות נקיים
 SOURCES = [
     "https://www.otcmarkets.com/news/rss",
     "https://finance.yahoo.com/rss/topstories",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
     "https://www.accesswire.com/rss",
-    "https://www.stocktitan.net/rss/",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=OTC&region=US&lang=en-US",
 ]
 
@@ -64,7 +64,6 @@ def hebrew_summary(title, desc):
     return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה ותשומת לב סביב המניה."
 
 def get_score(title, desc):
-    # ציון טהור בלבד - בלי בונוס לטריות, בלי בונוס לכלום
     text = (title + " " + desc).lower()
     score = 30
     for word, pts in STRONG.items():
@@ -126,13 +125,12 @@ def fetch_all():
                 pub = parse_date(item)
                 if pub:
                     age_hours = (now - pub).total_seconds() / 3600
-                    # רק מסנן ישנות מעל 48 שעות, לא נותן בונוס לחדשות
                     if age_hours > 48: continue
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
                 desc = clean_text(desc)
-                score = get_score(title, desc)  # ציון טהור בלבד
+                score = get_score(title, desc)
                 all_news.append({
                     "ticker": get_ticker(title, desc),
                     "title": title, "desc": desc,
@@ -144,7 +142,6 @@ def fetch_all():
                 })
         except Exception as e:
             print("err", url, e); continue
-    # מיון לפי ציון בלבד - הכי חזק למעלה, חדש או ישן זה לא משנה
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
@@ -161,7 +158,6 @@ def refresh_cache(force=False):
 
 @app.route("/api/news")
 def api_news():
-    # זה מה שהדף שואל כל 30 שניות כדי להראות שזה חי
     data = refresh_cache()
     return jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"], "server_time": time.time()})
 
@@ -224,7 +220,6 @@ async function checkLive(){
     document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
     document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
     document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
-    // אם יש חדשות חדשות עם ציון שונה - מרענן את הדף כדי להראות את הדירוג החדש
     const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
     if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
       location.reload();
