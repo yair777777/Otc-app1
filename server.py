@@ -96,7 +96,7 @@ def scanner_loop():
 @app.route('/')
 def home():
     try:
-        with open('index.html', encoding='utf-8') as f:
+        with open('Index.html', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
         return 'ERROR: ' + str(e) + ' | FILES: ' + str(os.listdir('.'))
