@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OTC Radar</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0f1e">
+<style>
+body{background:#0a0f1e;color:#fff;font-family:system-ui;margin:0;padding:16px}
+.header{font-size:26px;font-weight:800;text-align:center}
+.sub{text-align:center;color:#8b93a7;font-size:13px}
+.card{background:#141b2e;border-radius:16px;padding:16px;margin:12px 0;border-right:4px solid #00c389}
+.ticker{font-size:28px;font-weight:900}
+.btn{background:#00c389;border:0;padding:12px;border-radius:10px;font-weight:700;width:100%;margin-top:10px}
+.btn2{background:#1e293b;color:#fff;border:0;padding:10px;border-radius:10px;width:100%;margin-top:8px}
+.score{background:#0f2a20;color:#00ff9d;padding:5px 10px;border-radius:10px;font-weight:700}
+</style>
+</head>
+<body>
+<div class="header">OTC Radar</div>
+<div class="sub">סורק חדשות - כל שוק ה-OTC</div>
+<button id="enablePush" class="btn">הפעל התראות לטלפון</button>
+<div id="feed"></div>
+<script>
+const SERVER_URL = "https://otc-app.onrender.com";
+const VAPID_PUBLIC = "PASTE_PUBLIC_KEY";
+const alerts = [
+  {ticker:"ABCD", score:9.5, title:"השקעה של 20M דולר בחברה ששווה 6M", details:["גיוס נקי, בלי הנחה","מנכל חדש: לשעבר VP ב-NVIDIA","שווי שוק: 6M דולר"]},
+  {ticker:"EFGH", score:9.2, title:"מיזוג עם חברה פרטית עם הכנסות 15M", details:["Reverse Merger הושלם","החברה צומחת 120% בשנה"]}
+];
+const feed = document.getElementById('feed');
+alerts.forEach(a=>{
+  feed.innerHTML += `<div class="card"><div class="ticker">$${a.ticker}</div><p><b>${a.title}</b></p><div>ציון: <span class="score">${a.score}/10</span></div><ul>${a.details.map(d=>`<li>${d}</li>`).join('')}</ul><button class="btn">פרטים מלאים</button><button class="btn2">+ הוסף למעקב</button></div>`;
+});
+document.getElementById('enablePush').onclick = async () => {
+  const perm = await Notification.requestPermission();
+  if(perm !== 'granted'){ alert('צריך לאשר התראות'); return; }
+  const reg = await navigator.serviceWorker.register('sw.js');
+  const sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC)});
+  await fetch(SERVER_URL + '/subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subscription: sub})});
+  alert('מחובר! תקבל התראות לטלפון');
+};
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for(let i=0;i<rawData.length;++i) outputArray[i]=rawData.charCodeAt(i);
+  return outputArray;
+}
+</script>
+</body>
+</html>
