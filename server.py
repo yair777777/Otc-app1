@@ -83,35 +83,13 @@ def scanner_loop():
 
 @app.route("/")
 def home():
-    return app.send_static_file("index.html")
+    try:
+        with open("index.html", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"ERROR: {e} | FILES: {os.listdir('.')}"
 
 @app.route("/status")
 def status(): return jsonify({"status":"live","subs":len(load_subs()),"vapid_public":VAPID_PUBLIC[:10]+"..."})
 
-@app.route("/vapid-public-key")
-def vapid(): return jsonify({"key": VAPID_PUBLIC})
-
-@app.route("/subscribe", methods=["POST"])
-def sub():
-    data=request.json
-    subs=load_subs()
-    if data not in subs:
-        subs.append(data); save_subs(subs)
-    return jsonify({"ok":True,"count":len(subs)})
-
-@app.route("/test-push", methods=["POST"])
-def test():
-    subs=load_subs()
-    for s in subs: send_push(s, "✅ Test - הסורק עובד!", "אם קיבלת את זה, ההתראות מחוברות!", "https://otc-app1.onrender.com")
-    return jsonify({"sent":len(subs)})
-
-@app.route("/scan-now")
-def scan():
-    items = fetch_sec() + fetch_globe()
-    res=[{"title":t,"score":score(t),"url":u} for t,u in items[:15]]
-    return jsonify(res)
-
-threading.Thread(target=scanner_loop, daemon=True).start()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+@app.route("/vapid-public-key
