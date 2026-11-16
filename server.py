@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pywebpush import webpush, WebPushException
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=".", static_url_path="")
 CORS(app)
 
 VAPID_PUBLIC = os.environ.get("VAPID_PUBLIC_KEY", "")
@@ -82,7 +82,11 @@ def scanner_loop():
         time.sleep(120)
 
 @app.route("/")
-def home(): return jsonify({"status":"live","subs":len(load_subs()),"vapid_public":VAPID_PUBLIC[:10]+"..."})
+def home():
+    return app.send_static_file("index.html")
+
+@app.route("/status")
+def status(): return jsonify({"status":"live","subs":len(load_subs()),"vapid_public":VAPID_PUBLIC[:10]+"..."})
 
 @app.route("/vapid-public-key")
 def vapid(): return jsonify({"key": VAPID_PUBLIC})
