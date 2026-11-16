@@ -7,7 +7,7 @@ from pywebpush import webpush
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-VAPID_PRIVATE_KEY = "PASTE_PRIVATE_KEY"
+VAPID_PRIVATE_KEY = "0mItWJfrpdBnghUtlFQ8nCJd1Ip5hMjqEWVdEH1h4_w"
 VAPID_CLAIMS = {"sub": "mailto:you@otcradar.com"}
 subscribers = []
 
