@@ -24,6 +24,45 @@ STRONG = {
     "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10
 }
 
+# הפואנטה בעברית - לפי החוזק הכי גבוה שנמצא
+def hebrew_summary(title, desc):
+    text = (title + " " + desc).lower()
+    if "fda approval" in text:
+        return "🔥 אישור FDA - הטריגר הכי חזק שיש. החברה יכולה עכשיו למכור את המוצר, זה מה שמביא בדרך כלל את הקפיצה הכי גדולה."
+    if "nasdaq uplisting" in text or "uplist" in text:
+        return "🔥 מעבר לנאסד״ק - עובר מ-OTC לבורסה הגדולה. זה מכניס קרנות גדולות שלא יכלו לקנות לפני."
+    if "merger" in text or "acquisition" in text or "acquired" in text:
+        return "🔥 מיזוג / רכישה - חברה גדולה קונה אותה, בדרך כלל במחיר גבוה ממחיר השוק. זה יוצר לחץ קנייה מיידי."
+    if "phase 3" in text:
+        return "💊 תוצאות שלב 3 - השלב האחרון לפני אישור FDA. אם התוצאות טובות, זה כמעט אישור."
+    if "clinical trial" in text or "phase 2" in text:
+        return "💊 תוצאות ניסוי קליני - אם התרופה עובדת, החברה שווה הרבה יותר. זה הימור עם סיכון גבוה אבל פוטנציאל גדול."
+    if "record revenue" in text:
+        return "💰 הכנסות שיא - החברה מכניסה יותר כסף מאי פעם. זה מוכיח שהעסק עובד באמת ולא רק הבטחות."
+    if "guidance raised" in text or "beat estimates" in text:
+        return "💰 עקפה את התחזיות והעלתה ציפיות - כשהחברה מכה את האנליסטים, המוסדיים מתחילים לקנות."
+    if "contract" in text:
+        return "📝 חוזה חדש - כסף אמיתי שנכנס לחברה, לא רק דיבורים. חוזה ממשלתי או גדול זה הכי חזק."
+    if "partnership" in text:
+        return "🤝 שותפות אסטרטגית - חברה גדולה שמה את השם שלה על הקטנה. זה נותן אמינות וכסף."
+    if "earnings" in text or "revenue" in text:
+        return "📊 דוחות כספיים - זה הרגע שבו רואים אם החברה באמת מרוויחה או רק שורפת כסף."
+    if "buyback" in text:
+        return "💵 החברה קונה את המניות של עצמה - היא מאמינה שהמניה זולה מדי. זה מוריד את ההיצע ומעלה את המחיר."
+    if "patent" in text:
+        return "💡 פטנט חדש - הגנה על המוצר לשנים. אף אחד אחר לא יכול להעתיק אותו."
+    if "breakthrough" in text:
+        return "🚀 פריצת דרך - משהו חדש שהשוק לא ציפה לו. זה מה שיוצר את התנודות הכי חדות."
+    if "dividend" in text:
+        return "💵 דיבידנד - החברה מחלקת כסף לבעלי המניות. זה מושך משקיעים שרוצים הכנסה קבועה."
+    if "bankruptcy" in text:
+        return "⚠️ סכנת פשיטת רגל - ציון נמוך בכוונה. לא להיכנס, זה איתות שלילי."
+    if "reverse split" in text or "delisting" in text:
+        return "⚠️ איתות שלילי - פיצול הפוך / מחיקה מהמסחר. בדרך כלל מוריד את המחיר."
+    if "launch" in text:
+        return "🚀 השקת מוצר חדש - מתחיל להכניס כסף מהמוצר. אם ההשקה מצליחה, זה רק ההתחלה."
+    return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה וצומת לב סביב המניה. שווה לקרוא את הכתבה ולהחליט."
+
 def get_score(title, desc):
     text = (title + " " + desc).lower()
     score = 30
@@ -53,17 +92,13 @@ def fetch_all():
             if r.status_code != 200 or not r.content:
                 continue
             root = ET.fromstring(r.content)
-            # תומך גם ב-RSS (item) וגם ב-Atom (entry)
             items = root.findall(".//item")
             if not items:
-                # Atom עם namespace
                 items = [e for e in root.iter() if e.tag.endswith('entry')]
             for item in items[:20]:
-                # RSS
                 title = item.findtext("title") or ""
                 link = item.findtext("link") or "#"
                 desc = item.findtext("description") or item.findtext("summary") or ""
-                # Atom - link הוא attribute
                 if link == "#" or not link:
                     for child in item:
                         if child.tag.endswith('link') and child.get('href'):
@@ -78,6 +113,7 @@ def fetch_all():
                     "ticker": get_ticker(title, desc),
                     "title": title,
                     "desc": desc,
+                    "summary": hebrew_summary(title, desc),
                     "link": link if link else "#",
                     "score": score,
                     "time": datetime.now().strftime("%H:%M")
@@ -94,7 +130,7 @@ CACHE = {"data": [], "time": 0}
 def home():
     if time.time() - CACHE["time"] > 120 or not CACHE["data"]:
         data = fetch_all()
-        if data:  # שומר רק אם יש נתונים, לא דורס עם ריק
+        if data:
             CACHE["data"] = data
             CACHE["time"] = time.time()
     news = CACHE["data"]
@@ -112,6 +148,8 @@ h1{text-align:center;margin:5px} .sub{text-align:center;color:#aaa;margin-bottom
 .ticker{color:#00e676;font-weight:bold;font-size:18px}
 .title{font-size:16px;font-weight:bold;margin:8px 0}
 .desc{color:#ccc;font-size:14px}
+.summary{background:#2a2a00;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #555}
+.summary b{color:#ffeb3b}
 a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:10px}
 .time{color:#888;font-size:12px}
 </style></head><body>
@@ -122,11 +160,12 @@ a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:1
 <div class="ticker">{{n.ticker}} • #{{loop.index}}</div>
 <div class="title">{{n.title}}</div>
 <div class="desc">{{n.desc}}</div>
+<div class="summary"><b>למה דווקא זה?</b><br>{{n.summary}}</div>
 <a href="{{n.link}}" target="_blank">📖 קרא את הכתבה המקורית ←</a>
 <div class="time">{{n.time}}</div>
 </div>
 {% endfor %}
-{% if not news %}<p style="text-align:center">בודק מקורות... רענן בעוד דקה. אם זה ממשיך, אחד המקורות חסום כרגע.</p>{% endif %}
+{% if not news %}<p style="text-align:center">בודק מקורות... רענן בעוד דקה.</p>{% endif %}
 <script>setTimeout(()=>location.reload(),120000)</script>
 </body></html>
 """
