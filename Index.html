@@ -12,9 +12,10 @@ h1{text-align:center;margin:5px 0 0}
 button{width:100%;padding:14px;border:none;border-radius:12px;font-size:16px;font-weight:bold;cursor:pointer}
 .green{background:#00d68f;color:#000}
 .dark{background:#333;color:white;margin-top:8px}
-.card{background:#1a1a2e;border-radius:16px;padding:16px;margin-top:14px}
-.score{background:#0a5c36;padding:4px 10px;border-radius:8px;float:left}
+.card{background:#1a1a2e;border-radius:16px;padding:16px;margin-top:14px;position:relative}
+.score{background:#0a5c36;padding:4px 10px;border-radius:8px;position:absolute;left:16px;top:16px}
 a{color:#00d68f;text-decoration:none}
+.tag{display:inline-block;background:#333;padding:3px 8px;border-radius:6px;font-size:12px;margin-left:5px}
 </style>
 </head>
 <body>
@@ -31,10 +32,16 @@ async function load(){
   try{
     let r = await fetch('/scan-now');
     let data = await r.json();
+
+    // מיון: הציון הכי גבוה למעלה
+    data.sort((a,b) => b.score - a.score);
+
     let html = '';
     if(data.length==0) html = '<p style="text-align:center">אין כרגע חדשות חזקות. הסורק בודק כל 2 דקות.</p>';
     data.forEach(n=>{
-      html += '<div class="card"><span class="score">ציון: '+(n.score/10).toFixed(1)+'/10</span><h2>'+n.title+'</h2><a href="'+n.url+'" target="_blank">פרטים מלאים ></a></div>';
+      let score10 = (n.score/10).toFixed(1);
+      let ticker = n.ticker || '';
+      html += '<div class="card"><span class="score">ציון: '+score10+'/10</span><h2>'+(ticker ? ticker+' - ' : '')+n.title+'</h2><div><span class="tag">'+(n.source||'חדשות')+'</span><span class="tag">'+(n.time||'')+'</span></div><br><a href="'+n.url+'" target="_blank">פרטים מלאים ></a></div>';
     });
     document.getElementById('cards').innerHTML = html;
   }catch(e){
@@ -45,13 +52,22 @@ load();
 setInterval(load, 120000);
 
 async function enableNotifs(){
-  let reg = await navigator.serviceWorker.register('/sw.js');
-  let perm = await Notification.requestPermission();
-  if(perm!='granted'){ alert('צריך לאשר התראות'); return; }
-  let r = await fetch('/vapid-public-key'); let j = await r.json();
-  let sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey: urlBase64ToUint8Array(j.key)});
-  await fetch('/subscribe',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sub)});
-  alert('מחובר! תקבל התראות לטלפון');
+  try{
+    alert('מתחיל הרשמה...');
+    let reg = await navigator.serviceWorker.register('/sw.js');
+    alert('Service Worker OK');
+    let perm = await Notification.requestPermission();
+    alert('הרשאה: ' + perm);
+    if(perm!='granted'){ alert('צריך לאשר התראות'); return; }
+    let r = await fetch('/vapid-public-key'); let j = await r.json();
+    alert('קיבלתי מפתח');
+    let sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey: urlBase64ToUint8Array(j.key)});
+    alert('נרשמתי, שולח לשרת...');
+    await fetch('/subscribe',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sub)});
+    alert('מחובר! תקבל התראות לטלפון');
+  }catch(e){
+    alert('שגיאה: ' + e.message);
+  }
 }
 function urlBase64ToUint8Array(s){let p='='.repeat((4-s.length%4)%4);let b=(s+p).replace(/\-/g,'+').replace(/_/g,'/');let raw=window.atob(b);let out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i);return out;}
 </script>
