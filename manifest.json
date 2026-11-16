@@ -1,0 +1,8 @@
+{
+  "name": "OTC Radar",
+  "short_name": "OTC Radar",
+  "display": "standalone",
+  "background_color": "#0a0f1e",
+  "theme_color": "#0a0f1e",
+  "start_url": "/"
+}
