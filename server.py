@@ -7,8 +7,11 @@ from email.utils import parsedate_to_datetime
 app = Flask(__name__)
 
 SOURCES = [
+    # מקורות רשמיים של החברות עצמן בלבד - בלי סוחרים
     "https://www.otcmarkets.com/news/rss",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&output=atom",
+    "https://www.businesswire.com/rss/home/",
 ]
 
 STRONG = {
@@ -21,6 +24,8 @@ STRONG = {
     "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10,
     "annual revenue": 18, "full year revenue": 20, "full-year revenue": 20
 }
+
+DEBUG_LOG = {"last_fetch": "", "sources": [], "total": 0, "error": ""}
 
 def _parse_money_num(num_str, unit):
     try:
@@ -132,27 +137,31 @@ def clean_text(s):
     s = re.sub(r'<[^>]+>', '', s)
     return html.unescape(s)[:200]
 
-def parse_date(item):
-    for tag in ["pubDate", "published", "updated", "date"]:
-        val = item.findtext(tag)
-        if val:
-            try:
-                dt = parsedate_to_datetime(val)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                return dt
-            except: pass
+def _get_child_text(item, names):
     for child in item:
-        if child.tag.endswith('published') or child.tag.endswith('updated'):
+        tag = child.tag.split('}')[-1].lower()
+        if tag in names and child.text:
+            return child.text.strip()
+        if tag == 'link' and child.get('href'):
+            return child.get('href')
+    return ""
+
+def parse_date(item):
+    raw = _get_child_text(item, ["pubdate", "published", "updated", "date"])
+    if raw:
+        try:
+            dt = parsedate_to_datetime(raw)
+            if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except:
             try:
-                if not child.text: continue
-                dt = parsedate_to_datetime(child.text)
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
                 if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
                 return dt
             except: pass
     return None
 
 def deep_check(ticker, base_score, title, desc):
-    # בדיקה עמוקה - רק אם החדשה הראשונה הייתה מעניינת
     rev, cap = revenue_vs_cap(title, desc)
     is_interesting = base_score >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
     if not is_interesting or not ticker or ticker == "OTC":
@@ -189,27 +198,40 @@ def deep_check(ticker, base_score, title, desc):
 def fetch_all():
     all_news = []
     now = datetime.now(timezone.utc)
+    DEBUG_LOG["sources"] = []
     for url in SOURCES:
+        src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": ""}
         try:
-            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
-            if r.status_code != 200 or not r.content: continue
+            # SEC דורש User-Agent עם מייל - אחרת הוא חוסם
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
+            if "sec.gov" in url:
+                headers["User-Agent"] = "OTC-Radar contact@example.com"
+                headers["Accept-Encoding"] = "gzip, deflate"
+                headers["Host"] = "www.sec.gov"
+            r = requests.get(url, timeout=15, headers=headers)
+            src_info["status"] = r.status_code
+            if r.status_code != 200 or not r.content:
+                src_info["error"] = f"status {r.status_code} len {len(r.content) if r.content else 0}"
+                DEBUG_LOG["sources"].append(src_info)
+                continue
             root = ET.fromstring(r.content)
-            items = root.findall(".//item")
-            if not items:
-                items = [e for e in root.iter() if e.tag.endswith('entry')]
-            for item in items[:30]:
-                title = item.findtext("title") or ""
-                link = item.findtext("link") or "#"
-                desc = item.findtext("description") or item.findtext("summary") or ""
-                if link == "#" or not link:
-                    for child in item:
-                        if child.tag.endswith('link') and child.get('href'):
-                            link = child.get('href'); break
-                if not title: continue
+            items = []
+            for e in root.iter():
+                tn = e.tag.split('}')[-1].lower()
+                if tn in ("item", "entry"):
+                    items.append(e)
+            src_info["found"] = len(items)
+            for item in items[:40]:
+                title = _get_child_text(item, ["title"])
+                link = _get_child_text(item, ["link"])
+                desc = _get_child_text(item, ["description", "summary", "content"])
+                if not title:
+                    continue
                 pub = parse_date(item)
                 if pub:
                     age_hours = (now - pub).total_seconds() / 3600
-                    if age_hours > 48: continue
+                    if age_hours > 168:
+                        continue
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
@@ -223,14 +245,17 @@ def fetch_all():
                     "link": link if link else "#",
                     "score": score,
                     "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
-                    "age": f"{int(age_hours)} שעות" if age_hours < 48 else "ישן",
+                    "age": f"{int(age_hours)} שעות" if age_hours < 168 else "ישן",
                     "deep": ""
                 })
+                src_info["kept"] += 1
         except Exception as e:
-            print("err", url, e); continue
-    # מיון ראשוני כדי לבדוק לעומק רק את המעניינות ביותר
+            src_info["error"] = str(e)[:200]
+            print("err", url, e)
+        DEBUG_LOG["sources"].append(src_info)
+    DEBUG_LOG["last_fetch"] = datetime.now().strftime("%H:%M:%S")
+    DEBUG_LOG["total"] = len(all_news)
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
-    # בדיקה עמוקה - רק על 5 הראשונות הכי מעניינות, כדי לא להאט את הסריקה
     deep_count = 0
     for n in all_news:
         if deep_count >= 5:
@@ -244,7 +269,6 @@ def fetch_all():
             n["score"] = new_score
             n["deep"] = note
             deep_count += 1
-    # מיון סופי לפי ציון בלבד - אחרי הבדיקה העמוקה
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
@@ -260,6 +284,10 @@ def refresh_cache(force=False):
         if data:
             CACHE["data"] = data
     return CACHE["data"]
+
+@app.route("/api/debug")
+def api_debug():
+    return jsonify(DEBUG_LOG)
 
 @app.route("/api/news")
 def api_news():
@@ -300,15 +328,19 @@ h1{text-align:center;margin:5px} .sub{text-align:center;color:#aaa;margin-bottom
 .summary{background:#2a2a00;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #555}
 .summary b{color:#ffeb3b}
 .deep{background:#0a2a4a;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #4da6ff}
+.empty{background:#2a1a1a;border:1px solid #ff5252;border-radius:12px;padding:20px;text-align:center;margin-top:20px}
 a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:10px}
 .time{color:#888;font-size:12px}
 button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-weight:bold;font-size:16px;width:100%;margin-bottom:12px}
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות לפי ציון בלבד • לא לפי מה שהכי חדש</div>
+<div class="sub">10 הכי חזקות לפי ציון בלבד • לא לפי מה שהכי חדש • רק הודעות רשמיות של החברות</div>
 <button onclick="location.href='/?refresh=1&t='+Date.now()">🔄 רענן עכשיו בכוח</button>
 <div id="list">
+{% if not news %}
+<div class="empty">⚠️ הסורק לא מצא חדשות בסריקה האחרונה<br>לחץ על רענן עכשיו בכוח, ואם זה עדיין ריק - פתח /api/debug ותשלח לי צילום מסך<br><a href="/api/debug" target="_blank">פתח דף בדיקה</a></div>
+{% endif %}
 {% for n in news %}
 <div class="card {% if loop.index<=3 %}top{% endif %}">
 <span class="score">{{n.score}}/100</span>
