@@ -7,7 +7,6 @@ from email.utils import parsedate_to_datetime
 app = Flask(__name__)
 
 SOURCES = [
-    # מקורות רשמיים של החברות עצמן בלבד - בלי סוחרים
     "https://www.otcmarkets.com/news/rss",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&output=atom",
@@ -25,7 +24,7 @@ STRONG = {
     "annual revenue": 18, "full year revenue": 20, "full-year revenue": 20
 }
 
-DEBUG_LOG = {"last_fetch": "", "sources": [], "total": 0, "error": ""}
+DEBUG_LOG = {"last_fetch": "לא בוצעה סריקה עדיין", "sources": [], "total": 0}
 
 def _parse_money_num(num_str, unit):
     try:
@@ -68,17 +67,17 @@ def hebrew_summary(title, desc):
     if rev and cap:
         ratio = rev / cap
         if ratio >= 1:
-            return f"💰 מחזור שנתי חיובי ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. החברה מכניסה בשנה יותר ממה שהיא שווה בבורסה, זה אומר שהמניה זולה ביחס למה שהיא באמת מכניסה."
+            return f"💰 מחזור שנתי חיובי ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. החברה מכניסה בשנה יותר ממה שהיא שווה בבורסה."
         if ratio >= 0.5:
-            return f"💰 מחזור שנתי חזק ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. החברה מכניסה בשנה יותר מחצי ממה שהיא שווה, זה יחס חזק מאוד ל-OTC."
+            return f"💰 מחזור שנתי חזק ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. יחס חזק מאוד ל-OTC."
     if "fda approval" in text:
-        return "🔥 אישור FDA - הטריגר הכי חזק שיש. החברה יכולה עכשיו למכור את המוצר, זה מה שמביא בדרך כלל את הקפיצה הכי גדולה."
+        return "🔥 אישור FDA - הטריגר הכי חזק שיש."
     if "nasdaq uplisting" in text or "uplist" in text:
-        return "🔥 מעבר לנאסד״ק - עובר מ-OTC לבורסה הגדולה. זה מכניס קרנות גדולות שלא יכלו לקנות לפני."
+        return "🔥 מעבר לנאסד״ק - עובר מ-OTC לבורסה הגדולה."
     if "merger" in text or "acquisition" in text or "acquired" in text:
-        return "🔥 מיזוג / רכישה - חברה גדולה קונה אותה, בדרך כלל במחיר גבוה ממחיר השוק."
+        return "🔥 מיזוג / רכישה - חברה גדולה קונה אותה."
     if "phase 3" in text:
-        return "💊 תוצאות שלב 3 - השלב האחרון לפני אישור FDA. אם התוצאות טובות, זה כמעט אישור."
+        return "💊 תוצאות שלב 3 - השלב האחרון לפני אישור FDA."
     if "clinical trial" in text or "phase 2" in text:
         return "💊 תוצאות ניסוי קליני - אם התרופה עובדת, החברה שווה הרבה יותר."
     if "record revenue" in text:
@@ -86,26 +85,26 @@ def hebrew_summary(title, desc):
     if "guidance raised" in text or "beat estimates" in text:
         return "💰 עקפה את התחזיות והעלתה ציפיות."
     if "contract" in text:
-        return "📝 חוזה חדש - כסף אמיתי שנכנס לחברה, לא רק דיבורים."
+        return "📝 חוזה חדש - כסף אמיתי שנכנס לחברה."
     if "partnership" in text:
         return "🤝 שותפות אסטרטגית - חברה גדולה שמה את השם שלה על הקטנה."
     if "earnings" in text or "revenue" in text:
-        return "📊 דוחות כספיים - זה הרגע שבו רואים אם החברה באמת מרוויחה."
+        return "📊 דוחות כספיים - רואים אם החברה באמת מרוויחה."
     if "buyback" in text:
-        return "💵 החברה קונה את המניות של עצמה - היא מאמינה שהמניה זולה מדי."
+        return "💵 החברה קונה את המניות של עצמה."
     if "patent" in text:
         return "💡 פטנט חדש - הגנה על המוצר לשנים."
     if "breakthrough" in text:
-        return "🚀 פריצת דרך - משהו חדש שהשוק לא ציפה לו."
+        return "🚀 פריצת דרך."
     if "dividend" in text:
         return "💵 דיבידנד - החברה מחלקת כסף לבעלי המניות."
     if "bankruptcy" in text:
-        return "⚠️ סכנת פשיטת רגל - ציון נמוך בכוונה."
+        return "⚠️ סכנת פשיטת רגל."
     if "reverse split" in text or "delisting" in text:
         return "⚠️ איתות שלילי - פיצול הפוך / מחיקה מהמסחר."
     if "launch" in text:
-        return "🚀 השקת מוצר חדש - מתחיל להכניס כסף מהמוצר."
-    return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה ותשומת לב סביב המניה."
+        return "🚀 השקת מוצר חדש."
+    return "👀 חדשה עם עניין בשוק."
 
 def get_score(title, desc):
     text = (title + " " + desc).lower()
@@ -168,7 +167,7 @@ def deep_check(ticker, base_score, title, desc):
         return base_score, ""
     try:
         url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
-        r = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
+        r = requests.get(url, timeout=4, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200 or not r.content:
             return base_score, ""
         root = ET.fromstring(r.content)
@@ -199,29 +198,36 @@ def fetch_all():
     all_news = []
     now = datetime.now(timezone.utc)
     DEBUG_LOG["sources"] = []
+    start = time.time()
     for url in SOURCES:
+        # תיקון הבאג: אם עברו 20 שניות בסך הכל - עוצרים, לא מחכים למקור איטי
+        if time.time() - start > 20:
+            break
         src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": ""}
         try:
-            # SEC דורש User-Agent עם מייל - אחרת הוא חוסם
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
+            headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
             if "sec.gov" in url:
                 headers["User-Agent"] = "OTC-Radar contact@example.com"
-                headers["Accept-Encoding"] = "gzip, deflate"
-                headers["Host"] = "www.sec.gov"
-            r = requests.get(url, timeout=15, headers=headers)
+            # תיקון הבאג: 6 שניות ולא 15 - מקור איטי לא הורג את האתר
+            r = requests.get(url, timeout=6, headers=headers)
             src_info["status"] = r.status_code
             if r.status_code != 200 or not r.content:
-                src_info["error"] = f"status {r.status_code} len {len(r.content) if r.content else 0}"
+                src_info["error"] = f"status {r.status_code}"
                 DEBUG_LOG["sources"].append(src_info)
                 continue
-            root = ET.fromstring(r.content)
+            try:
+                root = ET.fromstring(r.content)
+            except Exception as e:
+                src_info["error"] = f"XML fail: {str(e)[:80]}"
+                DEBUG_LOG["sources"].append(src_info)
+                continue
             items = []
             for e in root.iter():
                 tn = e.tag.split('}')[-1].lower()
                 if tn in ("item", "entry"):
                     items.append(e)
             src_info["found"] = len(items)
-            for item in items[:40]:
+            for item in items[:30]:
                 title = _get_child_text(item, ["title"])
                 link = _get_child_text(item, ["link"])
                 desc = _get_child_text(item, ["description", "summary", "content"])
@@ -236,29 +242,27 @@ def fetch_all():
                     age_hours = 999
                 title = html.unescape(title.strip())
                 desc = clean_text(desc)
-                score = get_score(title, desc)
-                ticker = get_ticker(title, desc)
                 all_news.append({
-                    "ticker": ticker,
-                    "title": title, "desc": desc,
+                    "ticker": get_ticker(title, desc), "title": title, "desc": desc,
                     "summary": hebrew_summary(title, desc),
-                    "link": link if link else "#",
-                    "score": score,
+                    "link": link if link else "#", "score": get_score(title, desc),
                     "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
                     "age": f"{int(age_hours)} שעות" if age_hours < 168 else "ישן",
                     "deep": ""
                 })
                 src_info["kept"] += 1
         except Exception as e:
-            src_info["error"] = str(e)[:200]
-            print("err", url, e)
+            src_info["error"] = str(e)[:150]
         DEBUG_LOG["sources"].append(src_info)
     DEBUG_LOG["last_fetch"] = datetime.now().strftime("%H:%M:%S")
     DEBUG_LOG["total"] = len(all_news)
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
+    # בדיקה עמוקה - רק 3, עם timeout קצר, שלא תתקע את הסריקה
     deep_count = 0
-    for n in all_news:
-        if deep_count >= 5:
+    for n in all_news[:10]:
+        if deep_count >= 3:
+            break
+        if time.time() - start > 25:
             break
         rev, cap = revenue_vs_cap(n["title"], n["desc"])
         is_interesting = n["score"] >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
@@ -278,12 +282,20 @@ def refresh_cache(force=False):
     if force:
         CACHE["time"] = 0
     if force or time.time() - CACHE["time"] > 120 or not CACHE["data"]:
-        data = fetch_all()
+        try:
+            data = fetch_all()
+        except Exception as e:
+            print("fetch_all crash", e)
+            data = []
         CACHE["time"] = time.time()
         CACHE["scans"] += 1
         if data:
             CACHE["data"] = data
     return CACHE["data"]
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 @app.route("/api/debug")
 def api_debug():
@@ -291,23 +303,21 @@ def api_debug():
 
 @app.route("/api/news")
 def api_news():
-    force = request.args.get("force") == "1"
-    data = refresh_cache(force=force)
-    resp = jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"], "server_time": time.time()})
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
-    return resp
+    try:
+        force = request.args.get("force") == "1"
+        data = refresh_cache(force=force)
+        return jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"]})
+    except Exception as e:
+        return jsonify({"news": [], "error": str(e)}), 200
 
 @app.route("/")
 def home():
-    force = request.args.get("refresh") == "1"
-    news = refresh_cache(force=force)
-    html_out = render_template_string(HTML, news=news, updated=datetime.now().strftime("%H:%M:%S"))
+    # תיקון הבאג הכי חשוב: דף הבית לא מחכה לסריקה בכלל - נטען מיד
+    # החדשות נטענות אחר כך דרך JS מ-/api/news
+    # ככה האתר אף פעם לא נתקע על מקור איטי
+    html_out = render_template_string(HTML, news=[], updated=datetime.now().strftime("%H:%M:%S"))
     resp = make_response(html_out)
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
+    resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 HTML = """
@@ -334,45 +344,30 @@ a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:1
 button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-weight:bold;font-size:16px;width:100%;margin-bottom:12px}
 </style></head><body>
 <h1>OTC Radar</h1>
-<div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות לפי ציון בלבד • לא לפי מה שהכי חדש • רק הודעות רשמיות של החברות</div>
-<button onclick="location.href='/?refresh=1&t='+Date.now()">🔄 רענן עכשיו בכוח</button>
-<div id="list">
-{% if not news %}
-<div class="empty">⚠️ הסורק לא מצא חדשות בסריקה האחרונה<br>לחץ על רענן עכשיו בכוח, ואם זה עדיין ריק - פתח /api/debug ותשלח לי צילום מסך<br><a href="/api/debug" target="_blank">פתח דף בדיקה</a></div>
-{% endif %}
-{% for n in news %}
-<div class="card {% if loop.index<=3 %}top{% endif %}">
-<span class="score">{{n.score}}/100</span>
-<div class="ticker">{{n.ticker}} • #{{loop.index}}</div>
-<div class="title">{{n.title}}</div>
-<div class="desc">{{n.desc}}</div>
-<div class="summary"><b>למה דווקא זה?</b><br>{{n.summary}}</div>
-{% if n.deep %}<div class="deep">{{n.deep}}</div>{% endif %}
-<a href="{{n.link}}" target="_blank">📖 קרא את הכתבה המקורית ←</a>
-<div class="time">{{n.time}} • לפני {{n.age}}</div>
-</div>
-{% endfor %}
-</div>
+<div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">טוען...</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount">סריקות שבוצעו: -</span></div>
+<div class="sub">10 הכי חזקות לפי ציון בלבד • רק הודעות רשמיות של החברות</div>
+<button onclick="loadNews(true)">🔄 רענן עכשיו בכוח</button>
+<div id="list"><div class="empty">⏳ טוען חדשות... אם זה לא נטען תוך 10 שניות, רענן את הדף</div></div>
 <script>
 let sec=30;
-setInterval(()=>{
-  sec--; document.getElementById('countdown').innerText='סריקה הבאה בעוד '+sec+' שניות';
-  if(sec<=0){ sec=30; checkLive(); }
-},1000);
-async function checkLive(){
+function renderNews(news){
+  const el=document.getElementById('list');
+  if(!news || news.length===0){ el.innerHTML='<div class="empty">⚠️ הסורק לא מצא חדשות בסריקה האחרונה<br><a href="/api/debug" target="_blank">פתח דף בדיקה</a></div>'; return; }
+  el.innerHTML = news.map((n,i)=>{
+    return '<div class="card '+(i<3?'top':'')+'"><span class="score">'+n.score+'/100</span><div class="ticker">'+n.ticker+' • #'+(i+1)+'</div><div class="title">'+n.title+'</div><div class="desc">'+(n.desc||'')+'</div><div class="summary"><b>למה דווקא זה?</b><br>'+n.summary+'</div>'+(n.deep?'<div class="deep">'+n.deep+'</div>':'')+'<a href="'+n.link+'" target="_blank">📖 קרא את הכתבה המקורית ←</a><div class="time">'+n.time+' • לפני '+n.age+'</div></div>';
+  }).join('');
+}
+async function loadNews(force){
   try{
-    const r=await fetch('/api/news?t='+Date.now()); const j=await r.json();
+    const r=await fetch('/api/news?force='+(force?'1':'0')+'&t='+Date.now()); const j=await r.json();
     document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
     document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
     document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
-    const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
-    if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
-      location.reload();
-    }
+    renderNews(j.news);
   }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
 }
-setTimeout(checkLive, 2000);
+setInterval(()=>{ sec--; document.getElementById('countdown').innerText='סריקה הבאה בעוד '+sec+' שניות'; if(sec<=0){ sec=30; loadNews(false); } },1000);
+loadNews(false);
 </script>
 </body></html>
 """
