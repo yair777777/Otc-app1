@@ -6,16 +6,13 @@ from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 
-# מקורות חדשים - Google News עובד תמיד, לא חסום
 SOURCES = [
-    # חדשות חזקות בלבד - FDA, מיזוג, נאסדק
-    "https://news.google.com/rss/search?q=%22FDA%20approval%22%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20merger%20OR%20acquisition%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=nasdaq%20uplisting%20OTC&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20stocks%20earnings%20OR%20contract%20OR%20partnership&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=penny%20stocks%20breakthrough%20OR%20clinical%20trial&hl=en-US&gl=US&ceid=US:en",
+    "https://www.otcmarkets.com/news/rss",
+    "https://finance.yahoo.com/rss/topstories",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
     "https://www.accesswire.com/rss",
+    "https://www.stocktitan.net/rss/",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=OTC&region=US&lang=en-US",
 ]
 
 STRONG = {
@@ -67,6 +64,7 @@ def hebrew_summary(title, desc):
     return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה ותשומת לב סביב המניה."
 
 def get_score(title, desc):
+    # ציון טהור בלבד - בלי בונוס לטריות, בלי בונוס לכלום
     text = (title + " " + desc).lower()
     score = 30
     for word, pts in STRONG.items():
@@ -85,10 +83,7 @@ def get_ticker(title, desc):
 def clean_text(s):
     if not s: return ""
     s = re.sub(r'<[^>]+>', '', s)
-    s = html.unescape(s)
-    # Google News מוסיף בסוף " - שם האתר" - מורידים את זה
-    s = re.sub(r'\s*-\s*[A-Za-z ]+$', '', s)
-    return s[:200]
+    return html.unescape(s)[:200]
 
 def parse_date(item):
     for tag in ["pubDate", "published", "updated", "date"]:
@@ -110,19 +105,15 @@ def parse_date(item):
 
 def fetch_all():
     all_news = []
-    seen_titles = set()
     now = datetime.now(timezone.utc)
     for url in SOURCES:
         try:
-            r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
-            if r.status_code != 200 or not r.content: 
-                print("FAIL", url, r.status_code)
-                continue
+            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
+            if r.status_code != 200 or not r.content: continue
             root = ET.fromstring(r.content)
             items = root.findall(".//item")
             if not items:
                 items = [e for e in root.iter() if e.tag.endswith('entry')]
-            print(f"OK {url[:50]} -> {len(items)} items")
             for item in items[:30]:
                 title = item.findtext("title") or ""
                 link = item.findtext("link") or "#"
@@ -132,24 +123,16 @@ def fetch_all():
                         if child.tag.endswith('link') and child.get('href'):
                             link = child.get('href'); break
                 if not title: continue
-                # מניעת כפילויות - אותה חדשה מ-2 מקורות
-                key = title.lower().strip()[:60]
-                if key in seen_titles: continue
-                seen_titles.add(key)
                 pub = parse_date(item)
                 if pub:
                     age_hours = (now - pub).total_seconds() / 3600
+                    # רק מסנן ישנות מעל 48 שעות, לא נותן בונוס לחדשות
                     if age_hours > 48: continue
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
-                # Google News כותרת מגיעה "כותרת - שם אתר" - מנקים
-                if " - " in title:
-                    title = title.rsplit(" - ", 1)[0]
                 desc = clean_text(desc)
-                score = get_score(title, desc)
-                # אם הציון נמוך מדי (חדשה סתם) - לא מראים, רק חזקות
-                if score < 35: continue
+                score = get_score(title, desc)  # ציון טהור בלבד
                 all_news.append({
                     "ticker": get_ticker(title, desc),
                     "title": title, "desc": desc,
@@ -161,6 +144,7 @@ def fetch_all():
                 })
         except Exception as e:
             print("err", url, e); continue
+    # מיון לפי ציון בלבד - הכי חזק למעלה, חדש או ישן זה לא משנה
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
@@ -173,11 +157,11 @@ def refresh_cache(force=False):
             CACHE["data"] = data
             CACHE["time"] = time.time()
             CACHE["scans"] += 1
-        # אם אין חדשות חדשות - משאירים את הישנות, לא מראים מסך ריק
     return CACHE["data"]
 
 @app.route("/api/news")
 def api_news():
+    # זה מה שהדף שואל כל 30 שניות כדי להראות שזה חי
     data = refresh_cache()
     return jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"], "server_time": time.time()})
 
@@ -189,11 +173,6 @@ def home():
     resp = make_response(html_out)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
-
-@app.route("/debug")
-def debug():
-    # תיכנס ל- /debug כדי לראות איזה מקור עובד ואיזה לא
-    return jsonify({"cached": len(CACHE["data"]), "scans": CACHE["scans"], "last_time": CACHE["time"]})
 
 HTML = """
 <!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -233,7 +212,6 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </div>
 {% endfor %}
 </div>
-{% if not news %}<p style="text-align:center">סורק מקורות... לחץ רענן בעוד דקה. אם עדיין ריק, תיכנס ל- /debug ותשלח לי צילום מסך.</p>{% endif %}
 <script>
 let sec=30;
 setInterval(()=>{
@@ -246,11 +224,9 @@ async function checkLive(){
     document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
     document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
     document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
+    // אם יש חדשות חדשות עם ציון שונה - מרענן את הדף כדי להראות את הדירוג החדש
     const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
     if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
-      location.reload();
-    }
-    if(j.news.length>0 && !document.querySelector('.score')){
       location.reload();
     }
   }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
