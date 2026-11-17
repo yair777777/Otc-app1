@@ -8,11 +8,7 @@ app = Flask(__name__)
 
 SOURCES = [
     "https://www.otcmarkets.com/news/rss",
-    "https://finance.yahoo.com/rss/topstories",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
-    "https://www.accesswire.com/rss",
-    "https://www.stocktitan.net/rss/",
-    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=OTC&region=US&lang=en-US",
 ]
 
 STRONG = {
@@ -22,11 +18,54 @@ STRONG = {
     "clinical trial": 22, "phase 3": 25, "phase 2": 18, "breakthrough": 25,
     "patent": 15, "launch": 12, "expansion": 12, "dividend": 15,
     "buyback": 18, "guidance raised": 25, "beat estimates": 20,
-    "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10
+    "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10,
+    "annual revenue": 18, "full year revenue": 20, "full-year revenue": 20
 }
+
+def _parse_money_num(num_str, unit):
+    try:
+        v = float(num_str.replace(",", ""))
+    except:
+        return None
+    u = (unit or "").lower()
+    if "billion" in u or u == "b":
+        v *= 1000
+    return v
+
+def _find_money_near(text, keywords):
+    for kw in keywords:
+        idx = text.find(kw)
+        while idx != -1:
+            window = text[idx:idx+120]
+            m = re.search(r'\$\s*([\d,]+\.?\d*)\s*(billion|million|b|m)?', window)
+            if m:
+                val = _parse_money_num(m.group(1), m.group(2) or "m")
+                if val:
+                    return val
+            idx = text.find(kw, idx+1)
+    return None
+
+def revenue_vs_cap(title, desc):
+    text = (title + " " + desc).lower()
+    rev = _find_money_near(text, ["annual revenue", "full year revenue", "full-year revenue", "revenue of", "revenues of", "revenue was", "total revenue"])
+    cap = _find_money_near(text, ["market cap", "market capitalization", "market value"])
+    if rev is None:
+        rev = _find_money_near(text, ["revenue"])
+    if cap is None:
+        cap = _find_money_near(text, ["market cap"])
+    if rev and cap and cap > 0:
+        return rev, cap
+    return None, None
 
 def hebrew_summary(title, desc):
     text = (title + " " + desc).lower()
+    rev, cap = revenue_vs_cap(title, desc)
+    if rev and cap:
+        ratio = rev / cap
+        if ratio >= 1:
+            return f"💰 מחזור שנתי חיובי ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. החברה מכניסה בשנה יותר ממה שהיא שווה בבורסה, זה אומר שהמניה זולה ביחס למה שהיא באמת מכניסה."
+        if ratio >= 0.5:
+            return f"💰 מחזור שנתי חזק ביחס לשווי - הכנסה שנתית של כ-${rev:.0f}M מול שווי שוק של כ-${cap:.0f}M. החברה מכניסה בשנה יותר מחצי ממה שהיא שווה, זה יחס חזק מאוד ל-OTC."
     if "fda approval" in text:
         return "🔥 אישור FDA - הטריגר הכי חזק שיש. החברה יכולה עכשיו למכור את המוצר, זה מה שמביא בדרך כלל את הקפיצה הכי גדולה."
     if "nasdaq uplisting" in text or "uplist" in text:
@@ -64,12 +103,20 @@ def hebrew_summary(title, desc):
     return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה ותשומת לב סביב המניה."
 
 def get_score(title, desc):
-    # ציון טהור בלבד - בלי בונוס לטריות, בלי בונוס לכלום
     text = (title + " " + desc).lower()
     score = 30
     for word, pts in STRONG.items():
         if word in text:
             score += pts
+    rev, cap = revenue_vs_cap(title, desc)
+    if rev and cap and cap > 0:
+        ratio = rev / cap
+        if ratio >= 1:
+            score += 30
+        elif ratio >= 0.5:
+            score += 20
+        elif ratio >= 0.3:
+            score += 10
     return max(1, min(100, score))
 
 def get_ticker(title, desc):
@@ -104,6 +151,41 @@ def parse_date(item):
             except: pass
     return None
 
+def deep_check(ticker, base_score, title, desc):
+    # בדיקה עמוקה - רק אם החדשה הראשונה הייתה מעניינת
+    rev, cap = revenue_vs_cap(title, desc)
+    is_interesting = base_score >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
+    if not is_interesting or not ticker or ticker == "OTC":
+        return base_score, ""
+    try:
+        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+        r = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
+        if r.status_code != 200 or not r.content:
+            return base_score, ""
+        root = ET.fromstring(r.content)
+        items = root.findall(".//item")
+        if not items:
+            return base_score, ""
+        bonus = 0
+        found = 0
+        found_words = []
+        for item in items[:5]:
+            t2 = (item.findtext("title") or "") + " " + (item.findtext("description") or "")
+            t2_low = t2.lower()
+            for word, pts in STRONG.items():
+                if word in t2_low and pts > 0 and word not in found_words:
+                    found_words.append(word)
+                    found += 1
+                    bonus += 5
+                    break
+        if found == 0:
+            return base_score, ""
+        new_score = max(1, min(100, base_score + bonus))
+        note = f"🔍 בדיקה עמוקה על {ticker}: נמצאו עוד {found} חדשות חיוביות על המניה עצמה - הציון עלה מ-{base_score} ל-{new_score}."
+        return new_score, note
+    except:
+        return base_score, ""
+
 def fetch_all():
     all_news = []
     now = datetime.now(timezone.utc)
@@ -127,25 +209,42 @@ def fetch_all():
                 pub = parse_date(item)
                 if pub:
                     age_hours = (now - pub).total_seconds() / 3600
-                    # רק מסנן ישנות מעל 48 שעות, לא נותן בונוס לחדשות
                     if age_hours > 48: continue
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
                 desc = clean_text(desc)
-                score = get_score(title, desc)  # ציון טהור בלבד
+                score = get_score(title, desc)
+                ticker = get_ticker(title, desc)
                 all_news.append({
-                    "ticker": get_ticker(title, desc),
+                    "ticker": ticker,
                     "title": title, "desc": desc,
                     "summary": hebrew_summary(title, desc),
                     "link": link if link else "#",
                     "score": score,
                     "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
-                    "age": f"{int(age_hours)} שעות" if age_hours < 48 else "ישן"
+                    "age": f"{int(age_hours)} שעות" if age_hours < 48 else "ישן",
+                    "deep": ""
                 })
         except Exception as e:
             print("err", url, e); continue
-    # מיון לפי ציון בלבד - הכי חזק למעלה, חדש או ישן זה לא משנה
+    # מיון ראשוני כדי לבדוק לעומק רק את המעניינות ביותר
+    all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
+    # בדיקה עמוקה - רק על 5 הראשונות הכי מעניינות, כדי לא להאט את הסריקה
+    deep_count = 0
+    for n in all_news:
+        if deep_count >= 5:
+            break
+        rev, cap = revenue_vs_cap(n["title"], n["desc"])
+        is_interesting = n["score"] >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
+        if not is_interesting:
+            continue
+        new_score, note = deep_check(n["ticker"], n["score"], n["title"], n["desc"])
+        if note:
+            n["score"] = new_score
+            n["deep"] = note
+            deep_count += 1
+    # מיון סופי לפי ציון בלבד - אחרי הבדיקה העמוקה
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
@@ -164,7 +263,6 @@ def refresh_cache(force=False):
 
 @app.route("/api/news")
 def api_news():
-    # זה מה שהדף שואל כל 30 שניות כדי להראות שזה חי
     force = request.args.get("force") == "1"
     data = refresh_cache(force=force)
     resp = jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"], "server_time": time.time()})
@@ -201,6 +299,7 @@ h1{text-align:center;margin:5px} .sub{text-align:center;color:#aaa;margin-bottom
 .desc{color:#ccc;font-size:14px}
 .summary{background:#2a2a00;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #555}
 .summary b{color:#ffeb3b}
+.deep{background:#0a2a4a;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #4da6ff}
 a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:10px}
 .time{color:#888;font-size:12px}
 button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-weight:bold;font-size:16px;width:100%;margin-bottom:12px}
@@ -217,6 +316,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 <div class="title">{{n.title}}</div>
 <div class="desc">{{n.desc}}</div>
 <div class="summary"><b>למה דווקא זה?</b><br>{{n.summary}}</div>
+{% if n.deep %}<div class="deep">{{n.deep}}</div>{% endif %}
 <a href="{{n.link}}" target="_blank">📖 קרא את הכתבה המקורית ←</a>
 <div class="time">{{n.time}} • לפני {{n.age}}</div>
 </div>
@@ -234,7 +334,6 @@ async function checkLive(){
     document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
     document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
     document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
-    // אם יש חדשות חדשות עם ציון שונה - מרענן את הדף כדי להראות את הדירוג החדש
     const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
     if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
       location.reload();
