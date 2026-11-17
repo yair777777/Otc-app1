@@ -6,22 +6,13 @@ from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 
+# המקסימום החינמי - גוגל + בינג + גלוב + אקסס
 SOURCES = [
-    # === TickWatch - המקסימום החינמי ===
+    # TickWatch - גוגל
     "https://news.google.com/rss/search?q=site%3Atickwatch.online&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=site%3Atickwatch.online%20revenue%20OR%20undervalued%20OR%20earnings&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=site%3Atickwatch.online%20FDA%20OR%20merger%20OR%20uplisting&hl=en-US&gl=US&ceid=US:en",
+    # TickWatch - בינג (תופס מה שגוגל מפספס)
     "https://www.bing.com/news/search?q=site%3Atickwatch.online&format=rss",
-    # === OTC Markets - האתר הרשמי ===
-    "https://news.google.com/rss/search?q=site%3Aotcmarkets.com%20stock%20news&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=site%3Aotcmarkets.com%20revenue%20OR%20earnings%20OR%20OTCQX&hl=en-US&gl=US&ceid=US:en",
-    "https://www.bing.com/news/search?q=site%3Aotcmarkets.com&format=rss",
-    # === מחזור שנתי חיובי ביחס לשווי - החדש שלך ===
-    "https://news.google.com/rss/search?q=OTC%20%22annual%20revenue%22%20%22market%20cap%22%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=penny%20stock%20%22revenue%20exceeds%22%20OR%20%22undervalued%22%20OR%20%22profitable%22&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20stock%20%22positive%20cash%20flow%22%20OR%20%22record%20annual%20revenue%22&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20%22revenue%20growth%22%20%22market%20capitalization%22&hl=en-US&gl=US&ceid=US:en",
-    # === כללי - חזק ===
+    # כללי - חזק
     "https://news.google.com/rss/search?q=%22FDA%20approval%22%20stock&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=OTC%20merger%20OR%20acquisition%20stock&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=nasdaq%20uplisting%20OTC&hl=en-US&gl=US&ceid=US:en",
@@ -32,44 +23,17 @@ SOURCES = [
 ]
 
 STRONG = {
-    # FDA / מיזוג
     "fda approval": 30, "fda": 20, "merger": 28, "acquisition": 28,
-    "acquired": 25, "earnings": 18, "contract": 20, "partnership": 18, "nasdaq uplisting": 30, "uplist": 25,
+    "acquired": 25, "earnings": 18, "revenue": 15, "record revenue": 25,
+    "contract": 20, "partnership": 18, "nasdaq uplisting": 30, "uplist": 25,
     "clinical trial": 22, "phase 3": 25, "phase 2": 18, "breakthrough": 25,
     "patent": 15, "launch": 12, "expansion": 12, "dividend": 15,
     "buyback": 18, "guidance raised": 25, "beat estimates": 20,
-    "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10,
-    # === מחזור שנתי חיובי ביחס לשווי - החדש ===
-    "annual revenue": 30, "record annual revenue": 35, "annual revenue growth": 30,
-    "revenue exceeds": 30, "revenue exceeds market cap": 35,
-    "undervalued": 28, "undervalued stock": 30, "significantly undervalued": 32,
-    "market cap": 12, "market capitalization": 12, "low market cap": 25,
-    "revenue growth": 25, "strong revenue growth": 28,
-    "profitable": 25, "profitability": 25, "net profit": 25, "net income": 22,
-    "positive cash flow": 28, "positive operating cash flow": 30,
-    "revenue of $": 20, "revenue increased": 22, "revenue surged": 28,
-    "revenue up": 20, "sales growth": 22, "record sales": 25,
-    "otcqx": 12, "otcqb": 10, "uplisted to otcqx": 20,
-    "revenue": 15, "record revenue": 25,
+    "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10
 }
 
 def hebrew_summary(title, desc):
     text = (title + " " + desc).lower()
-    # מחזור שנתי ביחס לשווי - קודם כל, כי זה מה שביקשת
-    if "revenue exceeds market cap" in text or "revenue exceeds" in text:
-        return "💎 מחזור שנתי גבוה מהשווי - החברה מכניסה בשנה יותר ממה שהיא שווה בבורסה! זה אומר שהיא זולה בטירוף ביחס לכמה כסף היא באמת עושה."
-    if "annual revenue" in text or "record annual revenue" in text:
-        return "💎 מחזור שנתי חזק - ההכנסה השנתית של החברה גבוהה. תבדוק: אם המחזור השנתי קרוב לשווי השוק שלה או גדול ממנו - היא כנראה זולה מדי והשוק עוד לא תמחר אותה נכון."
-    if "undervalued" in text:
-        return "💎 חברה מתומחרת בחסר - השוק נותן לה שווי נמוך ממה שהיא באמת שווה לפי ההכנסות והרווחים שלה. זה בדיוק המקום שבו מוצאים מציאות."
-    if "positive cash flow" in text:
-        return "💰 תזרים מזומנים חיובי - החברה באמת מכניסה כסף לחשבון, לא רק על הנייר. זה מה שמבדיל חברה אמיתית מחברת חלום."
-    if "profitable" in text or "net profit" in text or "net income" in text:
-        return "💰 חברה רווחית - היא לא רק מכניסה, היא גם נשארת עם רווח בסוף. ב-OTC זה נדיר וזה מה שמקפיץ מניות."
-    if "revenue growth" in text or "revenue surged" in text or "revenue increased" in text:
-        return "📈 צמיחה בהכנסות - החברה מכניסה כל שנה יותר מהשנה הקודמת. אם השווי שלה לא עלה באותו קצב - היא נהייתה זולה יותר."
-    if "low market cap" in text:
-        return "💎 שווי שוק נמוך - שווי קטן ביחס למה שהחברה עושה. שילוב של שווי נמוך + הכנסות גבוהות = פוטנציאל גדול."
     if "fda approval" in text:
         return "🔥 אישור FDA - הטריגר הכי חזק שיש. החברה יכולה עכשיו למכור את המוצר, זה מה שמביא בדרך כלל את הקפיצה הכי גדולה."
     if "nasdaq uplisting" in text or "uplist" in text:
@@ -89,7 +53,7 @@ def hebrew_summary(title, desc):
     if "partnership" in text:
         return "🤝 שותפות אסטרטגית - חברה גדולה שמה את השם שלה על הקטנה."
     if "earnings" in text or "revenue" in text:
-        return "📊 דוחות כספיים - זה הרגע שבו רואים אם החברה באמת מרוויחה. תבדוק את היחס בין המחזור השנתי לשווי השוק."
+        return "📊 דוחות כספיים - זה הרגע שבו רואים אם החברה באמת מרוויחה."
     if "buyback" in text:
         return "💵 החברה קונה את המניות של עצמה - היא מאמינה שהמניה זולה מדי."
     if "patent" in text:
@@ -112,11 +76,6 @@ def get_score(title, desc):
     for word, pts in STRONG.items():
         if word in text:
             score += pts
-    # בונוס מיוחד - אם יש גם הכנסה וגם שווי נמוך באותה חדשה, זה בדיוק מה שאתה מחפש
-    if ("revenue" in text or "annual revenue" in text) and ("market cap" in text or "undervalued" in text or "low market" in text):
-        score += 15
-    if "tickwatch" in text or "otcmarkets" in text:
-        score += 5
     return max(1, min(100, score))
 
 def get_ticker(title, desc):
@@ -153,6 +112,7 @@ def parse_date(item):
     return None
 
 def fetch_tickwatch_sitemap_best():
+    # השכבה השלישית - הכי טובה בחינם: בודק ישירות את המפה של TickWatch
     out = []
     urls_to_try = [
         "https://tickwatch.online/sitemap.xml",
@@ -168,9 +128,12 @@ def fetch_tickwatch_sitemap_best():
             r = requests.get(u, timeout=10, headers=headers)
             if r.status_code != 200 or not r.text: continue
             txt = r.text
+            # אם זה XML - מחלץ קישורים חדשים
             if "<url" in txt or "<loc>" in txt:
                 locs = re.findall(r'<loc>(.*?)</loc>', txt)
+                # לוקח רק את 10 האחרונים - הכי חדשים
                 for loc in locs[-10:]:
+                    # מוציא טיקר מהקישור אם יש
                     m = re.search(r'/([A-Z]{2,5})', loc)
                     ticker = m.group(1) if m else get_ticker(loc, "")
                     title = loc.split("/")[-1].replace("-", " ").replace(".html","").title()
@@ -183,6 +146,7 @@ def fetch_tickwatch_sitemap_best():
                         "time": datetime.now().strftime("%H:%M"), "age": "עכשיו"
                     })
                 if out: break
+            # אם זה דף הבית - מחלץ טיקרים
             elif "tickwatch" in u and u.endswith("/"):
                 tickers = re.findall(r'\b([A-Z]{2,5})\b', txt)
                 seen = set()
@@ -237,6 +201,8 @@ def fetch_all():
                 desc = clean_text(desc)
                 score = get_score(title, desc)
                 if score < 35: continue
+                if "tickwatch" in url.lower() or "tickwatch" in link.lower() or "bing" in url.lower():
+                    score = min(100, score + 5)
                 all_news.append({
                     "ticker": get_ticker(title, desc),
                     "title": title, "desc": desc,
@@ -248,6 +214,7 @@ def fetch_all():
                 })
         except Exception as e:
             print("err", url, e); continue
+    # TickWatch - שכבה 3 - ישיר מהמפה
     tw = fetch_tickwatch_sitemap_best()
     for t in tw:
         if t["ticker"] not in [n["ticker"] for n in all_news]:
@@ -303,7 +270,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות • כולל TickWatch + OTC Markets • מחזור שנתי vs שווי שוק • חינמי</div>
+<div class="sub">10 הכי חזקות • כולל TickWatch - המקסימום החינמי • אוטומטי</div>
 <a href="/?refresh=1"><button>🔄 רענן עכשיו בכוח</button></a>
 <div id="list">
 {% for n in news %}
