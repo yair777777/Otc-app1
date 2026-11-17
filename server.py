@@ -6,13 +6,9 @@ from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 
-# המקסימום החינמי - גוגל + בינג + גלוב + אקסס
+# מקורות חדשים - Google News עובד תמיד, לא חסום
 SOURCES = [
-    # TickWatch - גוגל
-    "https://news.google.com/rss/search?q=site%3Atickwatch.online&hl=en-US&gl=US&ceid=US:en",
-    # TickWatch - בינג (תופס מה שגוגל מפספס)
-    "https://www.bing.com/news/search?q=site%3Atickwatch.online&format=rss",
-    # כללי - חזק
+    # חדשות חזקות בלבד - FDA, מיזוג, נאסדק
     "https://news.google.com/rss/search?q=%22FDA%20approval%22%20stock&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=OTC%20merger%20OR%20acquisition%20stock&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=nasdaq%20uplisting%20OTC&hl=en-US&gl=US&ceid=US:en",
@@ -90,6 +86,7 @@ def clean_text(s):
     if not s: return ""
     s = re.sub(r'<[^>]+>', '', s)
     s = html.unescape(s)
+    # Google News מוסיף בסוף " - שם האתר" - מורידים את זה
     s = re.sub(r'\s*-\s*[A-Za-z ]+$', '', s)
     return s[:200]
 
@@ -111,60 +108,6 @@ def parse_date(item):
             except: pass
     return None
 
-def fetch_tickwatch_sitemap_best():
-    # השכבה השלישית - הכי טובה בחינם: בודק ישירות את המפה של TickWatch
-    out = []
-    urls_to_try = [
-        "https://tickwatch.online/sitemap.xml",
-        "https://tickwatch.online/sitemap_index.xml",
-        "https://tickwatch.online/wp-sitemap.xml",
-        "https://tickwatch.online/rss.xml",
-        "https://tickwatch.online/feed",
-        "https://tickwatch.online/",
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for u in urls_to_try:
-        try:
-            r = requests.get(u, timeout=10, headers=headers)
-            if r.status_code != 200 or not r.text: continue
-            txt = r.text
-            # אם זה XML - מחלץ קישורים חדשים
-            if "<url" in txt or "<loc>" in txt:
-                locs = re.findall(r'<loc>(.*?)</loc>', txt)
-                # לוקח רק את 10 האחרונים - הכי חדשים
-                for loc in locs[-10:]:
-                    # מוציא טיקר מהקישור אם יש
-                    m = re.search(r'/([A-Z]{2,5})', loc)
-                    ticker = m.group(1) if m else get_ticker(loc, "")
-                    title = loc.split("/")[-1].replace("-", " ").replace(".html","").title()
-                    if len(title) < 5: title = f"TickWatch - {ticker}"
-                    out.append({
-                        "ticker": ticker, "title": title[:120],
-                        "desc": "חדש ב-TickWatch - נמצא במפת האתר",
-                        "summary": "👀 חדש ב-TickWatch - נמצא ישירות במפת האתר, בלי לחכות לגוגל.",
-                        "link": loc, "score": 50,
-                        "time": datetime.now().strftime("%H:%M"), "age": "עכשיו"
-                    })
-                if out: break
-            # אם זה דף הבית - מחלץ טיקרים
-            elif "tickwatch" in u and u.endswith("/"):
-                tickers = re.findall(r'\b([A-Z]{2,5})\b', txt)
-                seen = set()
-                for tk in tickers:
-                    if tk in ["FDA","CEO","OTC","USA","SEC","THE","AND","FOR","SOS","API","NEWS","HOME"] or tk in seen: continue
-                    seen.add(tk)
-                    out.append({
-                        "ticker": tk, "title": f"TickWatch - {tk} on watchlist",
-                        "desc": "מופיע ברשימת המעקב של TickWatch",
-                        "summary": "👀 מופיע ב-TickWatch ברשימת המעקב החמה.",
-                        "link": "https://tickwatch.online/", "score": 45,
-                        "time": datetime.now().strftime("%H:%M"), "age": "עכשיו"
-                    })
-                    if len(out) >= 5: break
-        except: continue
-        if out: break
-    return out[:5]
-
 def fetch_all():
     all_news = []
     seen_titles = set()
@@ -172,11 +115,14 @@ def fetch_all():
     for url in SOURCES:
         try:
             r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
-            if r.status_code != 200 or not r.content: continue
+            if r.status_code != 200 or not r.content: 
+                print("FAIL", url, r.status_code)
+                continue
             root = ET.fromstring(r.content)
             items = root.findall(".//item")
             if not items:
                 items = [e for e in root.iter() if e.tag.endswith('entry')]
+            print(f"OK {url[:50]} -> {len(items)} items")
             for item in items[:30]:
                 title = item.findtext("title") or ""
                 link = item.findtext("link") or "#"
@@ -186,6 +132,7 @@ def fetch_all():
                         if child.tag.endswith('link') and child.get('href'):
                             link = child.get('href'); break
                 if not title: continue
+                # מניעת כפילויות - אותה חדשה מ-2 מקורות
                 key = title.lower().strip()[:60]
                 if key in seen_titles: continue
                 seen_titles.add(key)
@@ -196,13 +143,13 @@ def fetch_all():
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
+                # Google News כותרת מגיעה "כותרת - שם אתר" - מנקים
                 if " - " in title:
                     title = title.rsplit(" - ", 1)[0]
                 desc = clean_text(desc)
                 score = get_score(title, desc)
+                # אם הציון נמוך מדי (חדשה סתם) - לא מראים, רק חזקות
                 if score < 35: continue
-                if "tickwatch" in url.lower() or "tickwatch" in link.lower() or "bing" in url.lower():
-                    score = min(100, score + 5)
                 all_news.append({
                     "ticker": get_ticker(title, desc),
                     "title": title, "desc": desc,
@@ -214,11 +161,6 @@ def fetch_all():
                 })
         except Exception as e:
             print("err", url, e); continue
-    # TickWatch - שכבה 3 - ישיר מהמפה
-    tw = fetch_tickwatch_sitemap_best()
-    for t in tw:
-        if t["ticker"] not in [n["ticker"] for n in all_news]:
-            all_news.append(t)
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
@@ -231,6 +173,7 @@ def refresh_cache(force=False):
             CACHE["data"] = data
             CACHE["time"] = time.time()
             CACHE["scans"] += 1
+        # אם אין חדשות חדשות - משאירים את הישנות, לא מראים מסך ריק
     return CACHE["data"]
 
 @app.route("/api/news")
@@ -246,6 +189,11 @@ def home():
     resp = make_response(html_out)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
+
+@app.route("/debug")
+def debug():
+    # תיכנס ל- /debug כדי לראות איזה מקור עובד ואיזה לא
+    return jsonify({"cached": len(CACHE["data"]), "scans": CACHE["scans"], "last_time": CACHE["time"]})
 
 HTML = """
 <!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -270,7 +218,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות • כולל TickWatch - המקסימום החינמי • אוטומטי</div>
+<div class="sub">10 הכי חזקות לפי ציון בלבד • לא לפי מה שהכי חדש</div>
 <a href="/?refresh=1"><button>🔄 רענן עכשיו בכוח</button></a>
 <div id="list">
 {% for n in news %}
@@ -285,7 +233,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </div>
 {% endfor %}
 </div>
-{% if not news %}<p style="text-align:center">סורק מקורות... לחץ רענן בעוד דקה.</p>{% endif %}
+{% if not news %}<p style="text-align:center">סורק מקורות... לחץ רענן בעוד דקה. אם עדיין ריק, תיכנס ל- /debug ותשלח לי צילום מסך.</p>{% endif %}
 <script>
 let sec=30;
 setInterval(()=>{
@@ -299,8 +247,12 @@ async function checkLive(){
     document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
     document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
     const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
-    if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){ location.reload(); }
-    if(j.news.length>0 && !document.querySelector('.score')){ location.reload(); }
+    if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
+      location.reload();
+    }
+    if(j.news.length>0 && !document.querySelector('.score')){
+      location.reload();
+    }
   }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
 }
 setTimeout(checkLive, 2000);
