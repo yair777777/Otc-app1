@@ -12,6 +12,10 @@ SOURCES = [
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&output=atom",
     "https://www.businesswire.com/rss/home/",
     "https://www.stocktitan.net/rss/",
+    "https://www.accesswire.com/rss",
+    "https://www.prnewswire.com/rss/news-releases-list.rss",
+    "https://www.benzinga.com/feed",
+    "https://finance.yahoo.com/rss/",
 ]
 
 BACKUP_SOURCES = [
@@ -19,6 +23,7 @@ BACKUP_SOURCES = [
     "https://news.google.com/rss/search?q=penny+stocks&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=small+cap+stocks+earnings&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=OTC+Markets+press+release&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=site:stocktitan.net&hl=en-US&gl=US&ceid=US:en",
 ]
 
 STRONG = {
@@ -131,23 +136,18 @@ def get_score(title, desc):
             score += 10
     return max(1, min(100, score))
 
-# --- תיקון 1: חילוץ טיקר + שם חברה אמיתי ---
 def get_ticker(title, desc, link=""):
     text = (title + " " + desc + " " + link)
-    # 1. הפורמט של StockTitan ו-GlobeNewswire: (NASDAQ: AAPL) / (OTCQB: XYZ) / (NYSE: MSFT)
-    m = re.search(r'\((?:NASDAQ|NYSE|NYSE American|OTCQB|OTCQX|OTCQB|OTC|AMEX|NASDAQ Capital Market)[\s:]*([A-Z]{1,5})\)', text)
+    m = re.search(r'\((?:NASDAQ|NYSE|NYSE American|OTCQB|OTCQX|OTC|AMEX|NASDAQ Capital Market)[\s:]*([A-Z]{1,5})\)', text)
     if m:
         return m.group(1)
-    # 2. NASDAQ: AAPL בלי סוגריים
     m = re.search(r'\b(?:NASDAQ|NYSE|OTCQB|OTCQX|OTC)[:\s]+([A-Z]{1,5})\b', text)
     if m:
         return m.group(1)
-    # 3. Ticker: AAPL
     m = re.search(r'\bTicker[:\s]+([A-Z]{1,5})\b', text, re.IGNORECASE)
     if m:
         return m.group(1).upper()
-    # 4. מילה באותיות גדולות שהיא לא מילה רגילה - לא THE / AND / FDA
-    blacklist = {"FDA","CEO","OTC","USA","US","SEC","THE","AND","FOR","WITH","FROM","NEWS","INC","LTD","CORP","LLC","PLC","FDA","NEW","STOCK","MARKET","SHARES","REPORTS","ANNOUNCES","TODAY","FIRST","SECOND"}
+    blacklist = {"FDA","CEO","OTC","USA","US","SEC","THE","AND","FOR","WITH","FROM","NEWS","INC","LTD","CORP","LLC","PLC","NEW","STOCK","MARKET","SHARES","REPORTS","ANNOUNCES","TODAY","FIRST","SECOND"}
     for t in re.findall(r'\b[A-Z]{2,5}\b', text):
         if t not in blacklist:
             return t
@@ -156,17 +156,14 @@ def get_ticker(title, desc, link=""):
 def get_company(title):
     if not title:
         return ""
-    # "Apple Inc. (NASDAQ: AAPL) Reports Earnings" -> "Apple Inc."
     if " (" in title:
         name = title.split(" (")[0].strip()
         if len(name) >= 3:
             return name
-    # "Apple Inc. - Reports..." -> "Apple Inc."
     if " - " in title:
         name = title.split(" - ")[0].strip()
         if 3 <= len(name) <= 70:
             return name
-    # "Apple: Reports..." -> "Apple"
     if ":" in title:
         name = title.split(":")[0].strip()
         if 3 <= len(name) <= 70 and " " in name:
@@ -236,10 +233,261 @@ def deep_check(ticker, base_score, title, desc):
     except:
         return base_score, ""
 
-# --- תיקון 2: StockTitan - חלק מהאתר, לעולם לא נכשל ---
-# האתר שלהם JS ולא נותן RSS ישיר, אז מביאים דרך Google News site:stocktitan.net
-# זה מחזיר כותרות אמיתיות עם לינקים ל-stocktitan.net
 def fetch_stocktitan(url, all_news):
     src_info = {"url": "stocktitan", "status": 0, "found": 0, "kept": 0, "error": "", "backup": False}
     try:
-        r = requests.get("https://news.google.com/rss/search?q=site:stocktitan.net&hl
+        r = requests.get("https://news.google.com/rss/search?q=site:stocktitan.net&hl=en-US&gl=US&ceid=US:en", timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        src_info["status"] = r.status_code
+        if r.status_code != 200 or not r.content:
+            src_info["error"] = f"status {r.status_code}"
+            DEBUG_LOG["sources"].append(src_info)
+            return 0
+        root = ET.fromstring(r.content)
+        items = []
+        for e in root.iter():
+            tn = e.tag.split('}')[-1].lower()
+            if tn in ("item", "entry"):
+                items.append(e)
+        src_info["found"] = len(items)
+        added = 0
+        for item in items[:25]:
+            t_raw = _get_child_text(item, ["title"])
+            if not t_raw:
+                continue
+            tc = html.unescape(t_raw.strip())
+            if tc.endswith(" - StockTitan"):
+                tc = tc[:-len(" - StockTitan")].strip()
+            if len(tc) < 15:
+                continue
+            if any(n["title"] == tc for n in all_news):
+                continue
+            link = _get_child_text(item, ["link"])
+            desc = clean_text(_get_child_text(item, ["description", "summary", "content"]))
+            ticker = get_ticker(tc, desc, link)
+            company = get_company(tc)
+            all_news.append({
+                "ticker": ticker, "company": company, "title": tc, "desc": desc,
+                "summary": hebrew_summary(tc, desc),
+                "link": link if link else "#", "score": get_score(tc, desc),
+                "time": datetime.now().strftime("%H:%M"), "age": "חדש", "deep": "",
+                "source": "StockTitan"
+            })
+            added += 1
+        src_info["kept"] = added
+        src_info["error"] = "OK - StockTitan דרך גוגל"
+        DEBUG_LOG["sources"].append(src_info)
+        return added
+    except Exception as e:
+        src_info["error"] = str(e)[:150]
+        DEBUG_LOG["sources"].append(src_info)
+        return 0
+
+def fetch_one_feed(url, is_backup, all_news, now, start):
+    if "stocktitan" in url:
+        try:
+            return fetch_stocktitan(url, all_news)
+        except:
+            return 0
+    src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": "", "backup": is_backup}
+    try:
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
+        if "sec.gov" in url:
+            headers["User-Agent"] = "OTC-Radar contact@example.com"
+        r = requests.get(url, timeout=6, headers=headers)
+        src_info["status"] = r.status_code
+        if r.status_code != 200 or not r.content:
+            src_info["error"] = f"status {r.status_code}"
+            DEBUG_LOG["sources"].append(src_info)
+            return 0
+        try:
+            root = ET.fromstring(r.content)
+        except Exception as e:
+            src_info["error"] = f"XML fail: {str(e)[:80]}"
+            DEBUG_LOG["sources"].append(src_info)
+            return 0
+        items = []
+        for e in root.iter():
+            tn = e.tag.split('}')[-1].lower()
+            if tn in ("item", "entry"):
+                items.append(e)
+        src_info["found"] = len(items)
+        added = 0
+        for item in items[:40]:
+            title_raw = _get_child_text(item, ["title"])
+            if not title_raw:
+                continue
+            title_clean = html.unescape(title_raw.strip())
+            if any(n["title"] == title_clean for n in all_news):
+                continue
+            link = _get_child_text(item, ["link"])
+            desc = _get_child_text(item, ["description", "summary", "content"])
+            pub = parse_date(item)
+            if pub:
+                age_hours = (now - pub).total_seconds() / 3600
+                if not is_backup and age_hours > 168:
+                    continue
+            else:
+                age_hours = 999
+            desc = clean_text(desc)
+            ticker = get_ticker(title_clean, desc, link)
+            company = get_company(title_clean)
+            all_news.append({
+                "ticker": ticker, "company": company, "title": title_clean, "desc": desc,
+                "summary": hebrew_summary(title_clean, desc),
+                "link": link if link else "#", "score": get_score(title_clean, desc),
+                "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
+                "age": f"{int(age_hours)} שעות" if age_hours < 1000 else "ישן",
+                "deep": "", "source": "OTC"
+            })
+            added += 1
+        src_info["kept"] = added
+        DEBUG_LOG["sources"].append(src_info)
+        return added
+    except Exception as e:
+        src_info["error"] = str(e)[:150]
+        DEBUG_LOG["sources"].append(src_info)
+        return 0
+
+def fetch_all():
+    all_news = []
+    now = datetime.now(timezone.utc)
+    DEBUG_LOG["sources"] = []
+    start = time.time()
+    for url in SOURCES:
+        if time.time() - start > 20:
+            break
+        try:
+            fetch_one_feed(url, False, all_news, now, start)
+        except:
+            continue
+    if len(all_news) < 10:
+        for url in BACKUP_SOURCES:
+            if len(all_news) >= 15:
+                break
+            if time.time() - start > 25:
+                break
+            try:
+                fetch_one_feed(url, True, all_news, now, start)
+            except:
+                continue
+    DEBUG_LOG["last_fetch"] = datetime.now().strftime("%H:%M:%S")
+    DEBUG_LOG["total"] = len(all_news)
+    all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
+    deep_count = 0
+    for n in all_news[:10]:
+        if deep_count >= 3:
+            break
+        if time.time() - start > 28:
+            break
+        rev, cap = revenue_vs_cap(n["title"], n["desc"])
+        is_interesting = n["score"] >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
+        if not is_interesting:
+            continue
+        new_score, note = deep_check(n["ticker"], n["score"], n["title"], n["desc"])
+        if note:
+            n["score"] = new_score
+            n["deep"] = note
+            deep_count += 1
+    all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
+    return all_news[:10]
+
+CACHE = {"data": [], "time": 0, "scans": 0}
+
+def refresh_cache(force=False):
+    if force:
+        CACHE["time"] = 0
+    if force or time.time() - CACHE["time"] > 120 or not CACHE["data"]:
+        try:
+            data = fetch_all()
+        except Exception as e:
+            print("fetch_all crash", e)
+            data = []
+        CACHE["time"] = time.time()
+        CACHE["scans"] += 1
+        if data:
+            CACHE["data"] = data
+    return CACHE["data"]
+
+@app.route("/health")
+def health():
+    return "OK", 200
+
+@app.route("/api/debug")
+def api_debug():
+    return jsonify(DEBUG_LOG)
+
+@app.route("/api/news")
+def api_news():
+    try:
+        force = request.args.get("force") == "1"
+        data = refresh_cache(force=force)
+        return jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"]})
+    except Exception as e:
+        return jsonify({"news": [], "error": str(e)}), 200
+
+@app.route("/")
+def home():
+    html_out = render_template_string(HTML, news=[], updated=datetime.now().strftime("%H:%M:%S"))
+    resp = make_response(html_out)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+HTML = """
+<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTC Radar</title>
+<style>
+body{background:#0a0a0a;color:#fff;font-family:Arial;padding:15px}
+h1{text-align:center;margin:5px} .sub{text-align:center;color:#aaa;margin-bottom:8px}
+.live{background:#1a2a1a;border:1px solid #00c853;border-radius:10px;padding:10px;text-align:center;margin-bottom:12px;font-size:14px}
+.dot{display:inline-block;width:10px;height:10px;background:#00ff00;border-radius:50%;animation:blink 1s infinite}
+@keyframes blink{0%{opacity:1}50%{opacity:0.2}100%{opacity:1}}
+.card{background:#1a1a1a;border-radius:12px;padding:14px;margin-bottom:12px;border-right:5px solid #00c853}
+.card.top{border-right-color:#ff9800}
+.score{float:left;background:#00c853;color:#000;font-weight:bold;padding:5px 10px;border-radius:20px;font-size:18px}
+.ticker{color:#00e676;font-weight:bold;font-size:20px}
+.company{color:#fff;font-weight:bold;font-size:16px;margin-top:2px}
+.source{color:#aaa;font-size:12px}
+.title{font-size:16px;font-weight:bold;margin:8px 0}
+.desc{color:#ccc;font-size:14px}
+.summary{background:#2a2a00;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #555}
+.summary b{color:#ffeb3b}
+.deep{background:#0a2a4a;border-radius:8px;padding:10px;margin-top:10px;font-size:14px;line-height:1.5;border:1px solid #4da6ff}
+.empty{background:#2a1a1a;border:1px solid #ff5252;border-radius:12px;padding:20px;text-align:center;margin-top:20px}
+a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:10px}
+.time{color:#888;font-size:12px}
+button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-weight:bold;font-size:16px;width:100%;margin-bottom:12px}
+</style></head><body>
+<h1>OTC Radar</h1>
+<div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">טוען...</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount">סריקות שבוצעו: -</span></div>
+<div class="sub">10 הכי חזקות לפי ציון בלבד • תמיד 10, גם אם הציון לא וואו</div>
+<button onclick="loadNews(true)">🔄 רענן עכשיו בכוח</button>
+<div id="list"><div class="empty">⏳ טוען חדשות... אם זה לא נטען תוך 10 שניות, רענן את הדף</div></div>
+<script>
+let sec=30;
+function renderNews(news){
+  const el=document.getElementById('list');
+  if(!news || news.length===0){ el.innerHTML='<div class="empty">⚠️ הסורק לא מצא חדשות בסריקה האחרונה<br><a href="/api/debug" target="_blank">פתח דף בדיקה</a></div>'; return; }
+  el.innerHTML = news.map((n,i)=>{
+    let name = n.company ? n.company : n.title;
+    let ticker = n.ticker ? n.ticker : 'OTC';
+    return '<div class="card '+(i<3?'top':'')+'"><span class="score">'+n.score+'/100</span><div class="ticker">'+ticker+' • #'+(i+1)+'</div><div class="company">'+name+'</div><div class="source">מקור: '+(n.source||'OTC')+'</div><div class="title">'+n.title+'</div><div class="desc">'+(n.desc||'')+'</div><div class="summary"><b>למה דווקא זה?</b><br>'+n.summary+'</div>'+(n.deep?'<div class="deep">'+n.deep+'</div>':'')+'<a href="'+n.link+'" target="_blank">📖 קרא את הכתבה המקורית ←</a><div class="time">'+n.time+' • לפני '+n.age+'</div></div>';
+  }).join('');
+}
+async function loadNews(force){
+  try{
+    const r=await fetch('/api/news?force='+(force?'1':'0')+'&t='+Date.now()); const j=await r.json();
+    document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
+    document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
+    document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
+    renderNews(j.news);
+  }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
+}
+setInterval(()=>{ sec--; document.getElementById('countdown').innerText='סריקה הבאה בעוד '+sec+' שניות'; if(sec<=0){ sec=30; loadNews(false); } },1000);
+loadNews(false);
+</script>
+</body></html>
+"""
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
