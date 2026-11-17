@@ -7,39 +7,24 @@ from email.utils import parsedate_to_datetime
 app = Flask(__name__)
 
 SOURCES = [
-    # === TickWatch - המקסימום החינמי ===
+    # === 1. TickWatch בלבד ===
     "https://news.google.com/rss/search?q=site%3Atickwatch.online&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=site%3Atickwatch.online%20revenue%20OR%20undervalued%20OR%20earnings&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=site%3Atickwatch.online%20FDA%20OR%20merger%20OR%20uplisting&hl=en-US&gl=US&ceid=US:en",
     "https://www.bing.com/news/search?q=site%3Atickwatch.online&format=rss",
-    # === OTC Markets - האתר הרשמי ===
+    # === 2. OTC Markets בלבד ===
     "https://news.google.com/rss/search?q=site%3Aotcmarkets.com%20stock%20news&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=site%3Aotcmarkets.com%20revenue%20OR%20earnings%20OR%20OTCQX&hl=en-US&gl=US&ceid=US:en",
     "https://www.bing.com/news/search?q=site%3Aotcmarkets.com&format=rss",
-    # === מחזור שנתי חיובי ביחס לשווי - החדש שלך ===
-    "https://news.google.com/rss/search?q=OTC%20%22annual%20revenue%22%20%22market%20cap%22%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=penny%20stock%20%22revenue%20exceeds%22%20OR%20%22undervalued%22%20OR%20%22profitable%22&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20stock%20%22positive%20cash%20flow%22%20OR%20%22record%20annual%20revenue%22&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20%22revenue%20growth%22%20%22market%20capitalization%22&hl=en-US&gl=US&ceid=US:en",
-    # === כללי - חזק ===
-    "https://news.google.com/rss/search?q=%22FDA%20approval%22%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20merger%20OR%20acquisition%20stock&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=nasdaq%20uplisting%20OTC&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=OTC%20stocks%20earnings%20OR%20contract%20OR%20partnership&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=penny%20stocks%20breakthrough%20OR%20clinical%20trial&hl=en-US&gl=US&ceid=US:en",
-    "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
-    "https://www.accesswire.com/rss",
 ]
 
 STRONG = {
-    # FDA / מיזוג
     "fda approval": 30, "fda": 20, "merger": 28, "acquisition": 28,
     "acquired": 25, "earnings": 18, "contract": 20, "partnership": 18, "nasdaq uplisting": 30, "uplist": 25,
     "clinical trial": 22, "phase 3": 25, "phase 2": 18, "breakthrough": 25,
     "patent": 15, "launch": 12, "expansion": 12, "dividend": 15,
     "buyback": 18, "guidance raised": 25, "beat estimates": 20,
     "bankruptcy": -20, "delisting": -20, "reverse split": -15, "dilution": -10,
-    # === מחזור שנתי חיובי ביחס לשווי - החדש ===
     "annual revenue": 30, "record annual revenue": 35, "annual revenue growth": 30,
     "revenue exceeds": 30, "revenue exceeds market cap": 35,
     "undervalued": 28, "undervalued stock": 30, "significantly undervalued": 32,
@@ -55,7 +40,6 @@ STRONG = {
 
 def hebrew_summary(title, desc):
     text = (title + " " + desc).lower()
-    # מחזור שנתי ביחס לשווי - קודם כל, כי זה מה שביקשת
     if "revenue exceeds market cap" in text or "revenue exceeds" in text:
         return "💎 מחזור שנתי גבוה מהשווי - החברה מכניסה בשנה יותר ממה שהיא שווה בבורסה! זה אומר שהיא זולה בטירוף ביחס לכמה כסף היא באמת עושה."
     if "annual revenue" in text or "record annual revenue" in text:
@@ -112,7 +96,6 @@ def get_score(title, desc):
     for word, pts in STRONG.items():
         if word in text:
             score += pts
-    # בונוס מיוחד - אם יש גם הכנסה וגם שווי נמוך באותה חדשה, זה בדיוק מה שאתה מחפש
     if ("revenue" in text or "annual revenue" in text) and ("market cap" in text or "undervalued" in text or "low market" in text):
         score += 15
     if "tickwatch" in text or "otcmarkets" in text:
@@ -303,7 +286,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות • כולל TickWatch + OTC Markets • מחזור שנתי vs שווי שוק • חינמי</div>
+<div class="sub">10 הכי חזקות • נטו TickWatch + OTC Markets • מחזור שנתי vs שווי שוק</div>
 <a href="/?refresh=1"><button>🔄 רענן עכשיו בכוח</button></a>
 <div id="list">
 {% for n in news %}
