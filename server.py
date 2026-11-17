@@ -12,10 +12,9 @@ SOURCES = [
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&output=atom",
     "https://www.businesswire.com/rss/home/",
+    "https://www.stocktitan.net/rss/",  # <-- StockTitan נוסף פה
 ]
 
-# מקורות גיבוי - גוגל ניוז, אף פעם לא חסום, תמיד מחזיר משהו
-# זה מה שמבטיח שתמיד יהיו 10
 BACKUP_SOURCES = [
     "https://news.google.com/rss/search?q=OTC+stocks&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=penny+stocks&hl=en-US&gl=US&ceid=US:en",
@@ -205,7 +204,6 @@ def deep_check(ticker, base_score, title, desc):
         return base_score, ""
 
 def fetch_one_feed(url, is_backup, all_news, now, start):
-    # מחזיר כמה נוספו, לא קורס לעולם
     src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": "", "backup": is_backup}
     try:
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
@@ -231,7 +229,6 @@ def fetch_one_feed(url, is_backup, all_news, now, start):
         src_info["found"] = len(items)
         added = 0
         for item in items[:40]:
-            # לא לדחוף כפילויות - אותו כותרת פעמיים
             title_raw = _get_child_text(item, ["title"])
             if not title_raw:
                 continue
@@ -243,7 +240,6 @@ def fetch_one_feed(url, is_backup, all_news, now, start):
             pub = parse_date(item)
             if pub:
                 age_hours = (now - pub).total_seconds() / 3600
-                # מקור ראשי: עד 7 ימים. גיבוי: לא מסננים בכלל - חייבים 10
                 if not is_backup and age_hours > 168:
                     continue
             else:
@@ -271,12 +267,10 @@ def fetch_all():
     now = datetime.now(timezone.utc)
     DEBUG_LOG["sources"] = []
     start = time.time()
-    # 1. מקורות ראשיים
     for url in SOURCES:
         if time.time() - start > 20:
             break
         fetch_one_feed(url, False, all_news, now, start)
-    # 2. תיקון הבאג שלך: אם יש פחות מ-10 - משלימים מגיבוי, לא משאירים דף ריק
     if len(all_news) < 10:
         for url in BACKUP_SOURCES:
             if len(all_news) >= 15:
@@ -287,7 +281,6 @@ def fetch_all():
     DEBUG_LOG["last_fetch"] = datetime.now().strftime("%H:%M:%S")
     DEBUG_LOG["total"] = len(all_news)
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
-    # בדיקה עמוקה רק על המעניינות
     deep_count = 0
     for n in all_news[:10]:
         if deep_count >= 3:
@@ -304,7 +297,6 @@ def fetch_all():
             n["deep"] = note
             deep_count += 1
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
-    # מבטיחים תמיד 10 - גם אם הציון נמוך, לוקחים את 10 הראשונות שיש
     return all_news[:10]
 
 CACHE = {"data": [], "time": 0, "scans": 0}
@@ -373,33 +365,4 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">טוען...</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות לפי ציון בלבד • תמיד 10, גם אם הציון לא וואו</div>
-<button onclick="loadNews(true)">🔄 רענן עכשיו בכוח</button>
-<div id="list"><div class="empty">⏳ טוען חדשות... אם זה לא נטען תוך 10 שניות, רענן את הדף</div></div>
-<script>
-let sec=30;
-function renderNews(news){
-  const el=document.getElementById('list');
-  if(!news || news.length===0){ el.innerHTML='<div class="empty">⚠️ הסורק לא מצא חדשות בסריקה האחרונה<br><a href="/api/debug" target="_blank">פתח דף בדיקה</a></div>'; return; }
-  el.innerHTML = news.map((n,i)=>{
-    return '<div class="card '+(i<3?'top':'')+'"><span class="score">'+n.score+'/100</span><div class="ticker">'+n.ticker+' • #'+(i+1)+'</div><div class="title">'+n.title+'</div><div class="desc">'+(n.desc||'')+'</div><div class="summary"><b>למה דווקא זה?</b><br>'+n.summary+'</div>'+(n.deep?'<div class="deep">'+n.deep+'</div>':'')+'<a href="'+n.link+'" target="_blank">📖 קרא את הכתבה המקורית ←</a><div class="time">'+n.time+' • לפני '+n.age+'</div></div>';
-  }).join('');
-}
-async function loadNews(force){
-  try{
-    const r=await fetch('/api/news?force='+(force?'1':'0')+'&t='+Date.now()); const j=await r.json();
-    document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
-    document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
-    document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
-    renderNews(j.news);
-  }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
-}
-setInterval(()=>{ sec--; document.getElementById('countdown').innerText='סריקה הבאה בעוד '+sec+' שניות'; if(sec<=0){ sec=30; loadNews(false); } },1000);
-loadNews(false);
-</script>
-</body></html>
-"""
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+<div class="sub">10 הכי חזקות לפי ציון
