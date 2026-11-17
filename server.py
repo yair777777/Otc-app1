@@ -64,7 +64,6 @@ def hebrew_summary(title, desc):
     return "👀 חדשה עם עניין בשוק - אין טריגר אחד ברור, אבל יש תנועה ותשומת לב סביב המניה."
 
 def get_score(title, desc):
-    # ציון טהור בלבד - בלי בונוס לטריות, בלי בונוס לכלום
     text = (title + " " + desc).lower()
     score = 30
     for word, pts in STRONG.items():
@@ -81,7 +80,8 @@ def get_ticker(title, desc):
     return "OTC"
 
 def clean_text(s):
-    if not s: return ""
+    if not s:
+        return ""
     s = re.sub(r'<[^>]+>', '', s)
     return html.unescape(s)[:200]
 
@@ -91,16 +91,20 @@ def parse_date(item):
         if val:
             try:
                 dt = parsedate_to_datetime(val)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 return dt
-            except: pass
+            except:
+                pass
     for child in item:
         if child.tag.endswith('published') or child.tag.endswith('updated'):
             try:
                 dt = parsedate_to_datetime(child.text)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 return dt
-            except: pass
+            except:
+                pass
     return None
 
 def fetch_all():
@@ -109,7 +113,8 @@ def fetch_all():
     for url in SOURCES:
         try:
             r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"})
-            if r.status_code != 200 or not r.content: continue
+            if r.status_code != 200 or not r.content:
+                continue
             root = ET.fromstring(r.content)
             items = root.findall(".//item")
             if not items:
@@ -121,18 +126,20 @@ def fetch_all():
                 if link == "#" or not link:
                     for child in item:
                         if child.tag.endswith('link') and child.get('href'):
-                            link = child.get('href'); break
-                if not title: continue
+                            link = child.get('href')
+                            break
+                if not title:
+                    continue
                 pub = parse_date(item)
                 if pub:
                     age_hours = (now - pub).total_seconds() / 3600
-                    # רק מסנן ישנות מעל 48 שעות, לא נותן בונוס לחדשות
-                    if age_hours > 48: continue
+                    if age_hours > 48:
+                        continue
                 else:
                     age_hours = 999
                 title = html.unescape(title.strip())
                 desc = clean_text(desc)
-                score = get_score(title, desc)  # ציון טהור בלבד
+                score = get_score(title, desc)
                 all_news.append({
                     "ticker": get_ticker(title, desc),
                     "title": title, "desc": desc,
@@ -143,27 +150,37 @@ def fetch_all():
                     "age": f"{int(age_hours)} שעות" if age_hours < 48 else "ישן"
                 })
         except Exception as e:
-            print("err", url, e); continue
-    # מיון לפי ציון בלבד - הכי חזק למעלה, חדש או ישן זה לא משנה
+            print("err", url, e)
+            continue
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
     return all_news[:10]
 
 CACHE = {"data": [], "time": 0, "scans": 0}
 
 def refresh_cache(force=False):
+    if force:
+        CACHE["data"] = []
+        CACHE["time"] = 0
     if force or time.time() - CACHE["time"] > 120 or not CACHE["data"]:
         data = fetch_all()
         if data:
             CACHE["data"] = data
             CACHE["time"] = time.time()
             CACHE["scans"] += 1
+        else:
+            CACHE["time"] = time.time()
     return CACHE["data"]
 
 @app.route("/api/news")
 def api_news():
-    # זה מה שהדף שואל כל 30 שניות כדי להראות שזה חי
-    data = refresh_cache()
+    force = request.args.get("force") == "1"
+    data = refresh_cache(force=force)
     return jsonify({"news": data, "last_scan": datetime.now().strftime("%H:%M:%S"), "scans": CACHE["scans"], "server_time": time.time()})
+
+@app.route("/refresh")
+def do_refresh():
+    refresh_cache(force=True)
+    return jsonify({"ok": True, "scans": CACHE["scans"], "count": len(CACHE["data"])})
 
 @app.route("/")
 def home():
@@ -172,6 +189,8 @@ def home():
     html_out = render_template_string(HTML, news=news, updated=datetime.now().strftime("%H:%M:%S"))
     resp = make_response(html_out)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
     return resp
 
 HTML = """
@@ -194,48 +213,7 @@ h1{text-align:center;margin:5px} .sub{text-align:center;color:#aaa;margin-bottom
 a{color:#4da6ff;text-decoration:none;font-weight:bold;display:block;margin-top:10px}
 .time{color:#888;font-size:12px}
 button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-weight:bold;font-size:16px;width:100%;margin-bottom:12px}
+button:disabled{background:#555}
 </style></head><body>
 <h1>OTC Radar</h1>
-<div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount" style="color:#888">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות לפי ציון בלבד • לא לפי מה שהכי חדש</div>
-<a href="/?refresh=1"><button>🔄 רענן עכשיו בכוח</button></a>
-<div id="list">
-{% for n in news %}
-<div class="card {% if loop.index<=3 %}top{% endif %}">
-<span class="score">{{n.score}}/100</span>
-<div class="ticker">{{n.ticker}} • #{{loop.index}}</div>
-<div class="title">{{n.title}}</div>
-<div class="desc">{{n.desc}}</div>
-<div class="summary"><b>למה דווקא זה?</b><br>{{n.summary}}</div>
-<a href="{{n.link}}" target="_blank">📖 קרא את הכתבה המקורית ←</a>
-<div class="time">{{n.time}} • לפני {{n.age}}</div>
-</div>
-{% endfor %}
-</div>
-<script>
-let sec=30;
-setInterval(()=>{
-  sec--; document.getElementById('countdown').innerText='סריקה הבאה בעוד '+sec+' שניות';
-  if(sec<=0){ sec=30; checkLive(); }
-},1000);
-async function checkLive(){
-  try{
-    const r=await fetch('/api/news'); const j=await r.json();
-    document.getElementById('lastScan').innerText='סריקה אחרונה: '+j.last_scan;
-    document.getElementById('scanCount').innerText='סריקות שבוצעו: '+j.scans;
-    document.getElementById('liveText').innerText='מחובר • סורק כל הזמן • '+new Date().toLocaleTimeString('he-IL');
-    // אם יש חדשות חדשות עם ציון שונה - מרענן את הדף כדי להראות את הדירוג החדש
-    const firstScore = document.querySelector('.score') ? document.querySelector('.score').innerText : '';
-    if(j.news.length>0 && j.news[0].score+'/100' !== firstScore){
-      location.reload();
-    }
-  }catch(e){ document.getElementById('liveText').innerText='מנסה להתחבר מחדש...'; }
-}
-setTimeout(checkLive, 2000);
-</script>
-</body></html>
-"""
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+<div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">סריקה אחרונה: {{updated}}</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span
