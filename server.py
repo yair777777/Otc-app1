@@ -6,11 +6,21 @@ from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 
+# מקורות ראשיים - רשמיים של החברות
 SOURCES = [
     "https://www.otcmarkets.com/news/rss",
     "https://www.globenewswire.com/RssFeed/subjectcode/13/OTC%20Markets/feed.xml",
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&output=atom",
     "https://www.businesswire.com/rss/home/",
+]
+
+# מקורות גיבוי - גוגל ניוז, אף פעם לא חסום, תמיד מחזיר משהו
+# זה מה שמבטיח שתמיד יהיו 10
+BACKUP_SOURCES = [
+    "https://news.google.com/rss/search?q=OTC+stocks&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=penny+stocks&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=small+cap+stocks+earnings&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=OTC+Markets+press+release&hl=en-US&gl=US&ceid=US:en",
 ]
 
 STRONG = {
@@ -104,7 +114,7 @@ def hebrew_summary(title, desc):
         return "⚠️ איתות שלילי - פיצול הפוך / מחיקה מהמסחר."
     if "launch" in text:
         return "🚀 השקת מוצר חדש."
-    return "👀 חדשה עם עניין בשוק."
+    return "👀 חדשה עם עניין בשוק - מוצג כי צריך תמיד 10, גם אם אין טריגר חזק כרגע."
 
 def get_score(title, desc):
     text = (title + " " + desc).lower()
@@ -194,75 +204,95 @@ def deep_check(ticker, base_score, title, desc):
     except:
         return base_score, ""
 
+def fetch_one_feed(url, is_backup, all_news, now, start):
+    # מחזיר כמה נוספו, לא קורס לעולם
+    src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": "", "backup": is_backup}
+    try:
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
+        if "sec.gov" in url:
+            headers["User-Agent"] = "OTC-Radar contact@example.com"
+        r = requests.get(url, timeout=6, headers=headers)
+        src_info["status"] = r.status_code
+        if r.status_code != 200 or not r.content:
+            src_info["error"] = f"status {r.status_code}"
+            DEBUG_LOG["sources"].append(src_info)
+            return 0
+        try:
+            root = ET.fromstring(r.content)
+        except Exception as e:
+            src_info["error"] = f"XML fail: {str(e)[:80]}"
+            DEBUG_LOG["sources"].append(src_info)
+            return 0
+        items = []
+        for e in root.iter():
+            tn = e.tag.split('}')[-1].lower()
+            if tn in ("item", "entry"):
+                items.append(e)
+        src_info["found"] = len(items)
+        added = 0
+        for item in items[:40]:
+            # לא לדחוף כפילויות - אותו כותרת פעמיים
+            title_raw = _get_child_text(item, ["title"])
+            if not title_raw:
+                continue
+            title_clean = html.unescape(title_raw.strip())
+            if any(n["title"] == title_clean for n in all_news):
+                continue
+            link = _get_child_text(item, ["link"])
+            desc = _get_child_text(item, ["description", "summary", "content"])
+            pub = parse_date(item)
+            if pub:
+                age_hours = (now - pub).total_seconds() / 3600
+                # מקור ראשי: עד 7 ימים. גיבוי: לא מסננים בכלל - חייבים 10
+                if not is_backup and age_hours > 168:
+                    continue
+            else:
+                age_hours = 999
+            desc = clean_text(desc)
+            all_news.append({
+                "ticker": get_ticker(title_clean, desc), "title": title_clean, "desc": desc,
+                "summary": hebrew_summary(title_clean, desc),
+                "link": link if link else "#", "score": get_score(title_clean, desc),
+                "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
+                "age": f"{int(age_hours)} שעות" if age_hours < 1000 else "ישן",
+                "deep": ""
+            })
+            added += 1
+        src_info["kept"] = added
+        DEBUG_LOG["sources"].append(src_info)
+        return added
+    except Exception as e:
+        src_info["error"] = str(e)[:150]
+        DEBUG_LOG["sources"].append(src_info)
+        return 0
+
 def fetch_all():
     all_news = []
     now = datetime.now(timezone.utc)
     DEBUG_LOG["sources"] = []
     start = time.time()
+    # 1. מקורות ראשיים
     for url in SOURCES:
-        # תיקון הבאג: אם עברו 20 שניות בסך הכל - עוצרים, לא מחכים למקור איטי
         if time.time() - start > 20:
             break
-        src_info = {"url": url, "status": 0, "found": 0, "kept": 0, "error": ""}
-        try:
-            headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml, */*", "Cache-Control": "no-cache"}
-            if "sec.gov" in url:
-                headers["User-Agent"] = "OTC-Radar contact@example.com"
-            # תיקון הבאג: 6 שניות ולא 15 - מקור איטי לא הורג את האתר
-            r = requests.get(url, timeout=6, headers=headers)
-            src_info["status"] = r.status_code
-            if r.status_code != 200 or not r.content:
-                src_info["error"] = f"status {r.status_code}"
-                DEBUG_LOG["sources"].append(src_info)
-                continue
-            try:
-                root = ET.fromstring(r.content)
-            except Exception as e:
-                src_info["error"] = f"XML fail: {str(e)[:80]}"
-                DEBUG_LOG["sources"].append(src_info)
-                continue
-            items = []
-            for e in root.iter():
-                tn = e.tag.split('}')[-1].lower()
-                if tn in ("item", "entry"):
-                    items.append(e)
-            src_info["found"] = len(items)
-            for item in items[:30]:
-                title = _get_child_text(item, ["title"])
-                link = _get_child_text(item, ["link"])
-                desc = _get_child_text(item, ["description", "summary", "content"])
-                if not title:
-                    continue
-                pub = parse_date(item)
-                if pub:
-                    age_hours = (now - pub).total_seconds() / 3600
-                    if age_hours > 168:
-                        continue
-                else:
-                    age_hours = 999
-                title = html.unescape(title.strip())
-                desc = clean_text(desc)
-                all_news.append({
-                    "ticker": get_ticker(title, desc), "title": title, "desc": desc,
-                    "summary": hebrew_summary(title, desc),
-                    "link": link if link else "#", "score": get_score(title, desc),
-                    "time": pub.strftime("%H:%M") if pub else datetime.now().strftime("%H:%M"),
-                    "age": f"{int(age_hours)} שעות" if age_hours < 168 else "ישן",
-                    "deep": ""
-                })
-                src_info["kept"] += 1
-        except Exception as e:
-            src_info["error"] = str(e)[:150]
-        DEBUG_LOG["sources"].append(src_info)
+        fetch_one_feed(url, False, all_news, now, start)
+    # 2. תיקון הבאג שלך: אם יש פחות מ-10 - משלימים מגיבוי, לא משאירים דף ריק
+    if len(all_news) < 10:
+        for url in BACKUP_SOURCES:
+            if len(all_news) >= 15:
+                break
+            if time.time() - start > 25:
+                break
+            fetch_one_feed(url, True, all_news, now, start)
     DEBUG_LOG["last_fetch"] = datetime.now().strftime("%H:%M:%S")
     DEBUG_LOG["total"] = len(all_news)
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
-    # בדיקה עמוקה - רק 3, עם timeout קצר, שלא תתקע את הסריקה
+    # בדיקה עמוקה רק על המעניינות
     deep_count = 0
     for n in all_news[:10]:
         if deep_count >= 3:
             break
-        if time.time() - start > 25:
+        if time.time() - start > 28:
             break
         rev, cap = revenue_vs_cap(n["title"], n["desc"])
         is_interesting = n["score"] >= 70 or (rev and cap and cap > 0 and rev / cap >= 0.5)
@@ -274,6 +304,7 @@ def fetch_all():
             n["deep"] = note
             deep_count += 1
     all_news = sorted(all_news, key=lambda x: x["score"], reverse=True)
+    # מבטיחים תמיד 10 - גם אם הציון נמוך, לוקחים את 10 הראשונות שיש
     return all_news[:10]
 
 CACHE = {"data": [], "time": 0, "scans": 0}
@@ -312,9 +343,6 @@ def api_news():
 
 @app.route("/")
 def home():
-    # תיקון הבאג הכי חשוב: דף הבית לא מחכה לסריקה בכלל - נטען מיד
-    # החדשות נטענות אחר כך דרך JS מ-/api/news
-    # ככה האתר אף פעם לא נתקע על מקור איטי
     html_out = render_template_string(HTML, news=[], updated=datetime.now().strftime("%H:%M:%S"))
     resp = make_response(html_out)
     resp.headers["Cache-Control"] = "no-cache"
@@ -345,7 +373,7 @@ button{background:#00c853;border:none;padding:10px 20px;border-radius:20px;font-
 </style></head><body>
 <h1>OTC Radar</h1>
 <div class="live"><span class="dot"></span> <b id="liveText">מחובר • סורק כל הזמן</b><br><span id="lastScan">טוען...</span> • <span id="countdown">סריקה הבאה בעוד 30 שניות</span><br><span id="scanCount">סריקות שבוצעו: -</span></div>
-<div class="sub">10 הכי חזקות לפי ציון בלבד • רק הודעות רשמיות של החברות</div>
+<div class="sub">10 הכי חזקות לפי ציון בלבד • תמיד 10, גם אם הציון לא וואו</div>
 <button onclick="loadNews(true)">🔄 רענן עכשיו בכוח</button>
 <div id="list"><div class="empty">⏳ טוען חדשות... אם זה לא נטען תוך 10 שניות, רענן את הדף</div></div>
 <script>
